@@ -1,1 +1,53 @@
 # experimental-gingivitis-inflammatory-response
+The complete R code for data analyses used in paper published with [INSERT JOURNAL NAME]: [INSERT ARTICLE TITLE] **(DOI: [INSERT DOI])**
+
+## Repository purpose 
+
+This repository contains the workflow for taxonomic and functional profiling of microbiota data used in the study: 
+
+* Importing **MetaPhlAn** and **HUMAnN** profiling datasets
+* Alpha-diversity analysis
+* Beta-diversity analysis
+* Differential abundance analysis using **MaAsLin3**
+* Genus-level contribution and species richness analyses of representative pathways 
+
+## Short description of R-code (in order of execution) 
+
+**1. Data import and data preprocessing**
+
+_File:_ `R/metaphlan_to_phyloseq.Rmd`
+
+_File:_ `R/humann_to_phyloseq.Rmd`
+* Load MetaPhlAn4 taxonomic profiles
+* Load HUMAnN functional profiles
+* Import and merge metadata
+
+**2. Alpha-diversity analysis**
+
+_File:_ `R/alpha_v2.Rmd` 
+* Calculate diversity metrics (Shannon index)
+* Statistical comparison across sample type and timepoints 
+* Visualization
+
+**3. Beta-diversity analysis**
+
+_File:_ `R/beta_v5.Rmd`
+* Compute distance matrices (robust Aitchison distance)
+* Ordination analysis and visualization (PCoA)
+* Statistical comparisons across sample type and timepoints
+
+**4. Differential abundance analysis** 
+
+_File:_ `R/DA_v2.Rmd`
+* Model setup using MaAsLin3
+* Identification of significantly associated species and pathways
+
+**5. Taxonomic contribution analysis**
+
+_File:_ `R/tax_contribution.Rmd`
+* Visualize raw mean genus contributions for representative pathways (divided into classified and unclassified genera)
+* Visualize the species richness for representative pathways (the number of species among classified genera contributing to each pathway)
+
+**Acknowledgements**
+
+Parts of the bioinformatics analyses were performed using R functions developed by Florentin Constancias, available at [fconstancias/KU_Caroline](https://github.com/fconstancias/KU_Caroline). These functions are distributed under the GNU General Public License v3.0 (GPL-3.0).
