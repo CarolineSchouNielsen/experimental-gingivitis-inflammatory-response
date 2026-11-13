@@ -1,0 +1,367 @@
+---
+title: "Import of MetaPhlAn4 data and transformation to phyloseq object"
+subtitle: "ARTICLE TITLE"
+author: "Caroline Schou Nielsen"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+output: 
+  html_document: 
+    toc: yes
+    keep_md: no
+---
+
+```{r setup}
+rm(list = ls())
+gc()
+# invisible(lapply(paste0('package:', names(sessionInfo()$otherPkgs)), detach, character.only=TRUE, unload=TRUE))
+# options(java.parameters = "-Xmx80000m")
+```
+
+```{r setup2}
+knitr::opts_chunk$set(warning = FALSE)
+knitr::opts_chunk$set(message = FALSE)
+##knitr::opts_chunk$set(cache=TRUE)
+##knitr::opts_chunk$set(echo = TRUE)
+##knitr::opts_chunk$set(dev = "ragg_png") # https://ragg.r-lib.org/index.html
+##knitr::opts_chunk$set(fig.width = 6) #https://r4ds.had.co.nz/graphics-for-communication.html#figure-sizing
+knitr::opts_chunk$set(fig.asp = 0.618)
+knitr::opts_chunk$set(fig.show = "hold")
+knitr::opts_chunk$set(fig.show = "70%")
+knitr::opts_chunk$set(fig.align = "center")
+```
+
+```{r setup3}
+library(tidyverse)
+library(readxl)
+library(readr)
+library(phyloseq)
+library(randomcoloR)
+library(dplyr)
+library(ggrepel)
+library(ggpubr)
+```
+
+```{r setup4}
+source("https://raw.githubusercontent.com/fconstancias/metabaRpipe-source/master/Rscripts/functions.R")
+source("https://raw.githubusercontent.com/fconstancias/DivComAnalyses/master/R/phyloseq_biobakery_functions.R")
+source("https://raw.githubusercontent.com/fconstancias/DivComAnalyses/master/R/phyloseq_varia.R") 
+
+source_dir = "https://raw.githubusercontent.com/fconstancias/DivComAnalyses/master/R/"
+
+source(paste0(source_dir,"phyloseq_biobakery_functions.R"))
+source(paste0(source_dir,"phyloseq_varia.R"))
+```
+
+```{r setup5}
+pd <- position_dodge(0)
+```
+
+```{r transform metaphlan merged abundance table into phyloseq object}
+ps <- "/Volumes/lnp524/PhD/Puplications/Inflammation_trajectories/00_raw_data/merged_abundance_table.txt" %>%
+metaphlan_2phyloseq(merged_metaphlan = .)
+
+# Calling the first few sample names
+ps %>% 
+  sample_names() %>% 
+  head()
+```
+
+```{r refine sample name}
+ps %>% 
+  sample_names() %>% 
+  str_extract(.,"[^_]+") %>% 
+  str_remove_all(., "[A-Z]")  -> sample_names(ps)
+
+ps %>% 
+  sample_names() %>% 
+  head()
+```
+
+```{r upload metadata table}
+meta <- '/Volumes/lnp524/PhD/Puplications/Inflammation_trajectories/00_raw_data/Metadata.xlsx' %>%
+  read_excel
+
+meta %>% 
+  DT::datatable()
+```
+
+```{r merge phyloseq object with metadata}
+ps <- ps %>% 
+      physeq_add_metadata(metadata = meta,
+                      sample_column = "ID")
+```
+
+```{r add S_ to the beginning of ID names}
+# Phyloseq prefers samples names that does not start with a number
+ps %>% 
+  sample_names() %>% 
+  paste0("S_", .) -> sample_names(ps)
+
+ps %>% 
+  sample_names() %>% 
+  head()
+```
+
+```{r Modify metadata within phyloseq object}
+ps_up <- ps %>% 
+  microViz::ps_mutate(Time = factor(Time, levels = c("TP1", "TP2", "TP3")),
+                      Period = Time,
+                      Period = recode(Period, TP1 = "Baseline", TP2 = "Week 2", TP3 = "Week 4"), 
+                      time = parse_number(as.character(Time)),
+                      Sample_Type =  Sample,
+                      Sex = recode(sex, Male = 1, Female = 2),
+                      Sex = factor(Sex, levels = c("1", "2")), 
+                      Sample = factor(Sample, levels = c("Saliva", "Plaque")),
+                      Subject = fct_relevel(Subject, "D01"))
+```
+
+```{r save phyloseq object to dataframe}
+dfdf <- ps_up %>% 
+  sample_data(.) %>% 
+  data.frame() 
+
+dfdf %>% 
+  DT::datatable()
+```
+
+```{r generate subject color palette}
+ps_up %>% 
+  generate_color_palette(var = "Subject",
+                         pal = "randomcoloR",
+                         print = TRUE, runTsne = TRUE) -> sub_pal
+```
+
+```{r delta mean plaque and BOP% - normalized to baseline}
+meta <- ps_up %>%
+  sample_data() %>%
+  data.frame() %>%
+  rownames_to_column("sample_id")
+
+# Select important columns and transform to long format
+meta_long <- meta %>%
+  select(sample_id, Sample, Subject, Time, time, starts_with("mean")) %>%
+  pivot_longer(cols = starts_with("mean"))
+
+meta_long %>% 
+  group_by(name, Subject) %>% 
+  arrange(time) %>%
+  mutate(delta = value - first(value)) -> meta_long_delta # adding extra column where the value of TP1 is subtracted 
+                                                          # from the values at TP2 and TP3, separately. 
+```
+
+```{r ratio mean plaque and BOP% - normalized to baseline}
+meta_long %>%
+  group_by(name, Subject) %>%
+  arrange(time) %>%
+  mutate(ratio = value / first(value)) -> meta_long_ratio # adding extra column where the value of TP1 is divided
+                                                          # with the values at TP2 and TP3, separately. 
+```
+
+```{r Adding delta- and ratio values to phyloseq object, warning=FALSE}
+meta_long_delta %>% 
+  select(-value) %>%
+  pivot_wider(names_from = "name", values_from = "delta") %>%
+  rename_at(vars(starts_with('mean')), funs(paste0('delta_', .))) %>% # Add "delta" to every column header that
+                                                                      # starts with "mean"
+  select(sample_id, delta_mean_plaque, delta_mean_bleeding) %>% # Select delta values and identifier
+  full_join(.,
+            meta_long_ratio %>% # join to table with ratio values
+  select(-value) %>%
+  pivot_wider(names_from = "name", values_from = "ratio") %>% # Add "delta" to every column header that
+                                                              # starts with "mean"
+  rename_at(vars(starts_with('mean')), funs(paste0('ratio_', .))) %>%
+  select(sample_id, ratio_mean_plaque, ratio_mean_bleeding)) -> tmp # Select ratio values and identifier
+                                                                    # Now tmp is a table with the delta and ratio
+                                                                    # for mean bleeding and mean plaque
+
+ps_up %>%
+  sample_data() %>%
+  data.frame() %>%
+  rownames_to_column("sample_id") %>%
+  left_join(.,
+            tmp) %>%
+  column_to_rownames("sample_id") -> sample_data(ps_up) # join tmp values to ps_up phyloseq object, so all the
+                                                        # information are together
+```
+
+```{r clustering week 2 samples manually - delta of plaque and BOP%}
+result_clust <- meta_long_delta %>% # take values from the delta table 
+  filter(Sample == "Plaque", # same clinical values for saliva and plaque samples, as they both come from the same subject
+         Time == "TP2") %>% # select only TP2 samples 
+  select(-value) %>% 
+  pivot_wider(names_from = "name", values_from = "delta") %>% 
+  column_to_rownames("Subject") %>% 
+  select(sample_id, mean_plaque, mean_bleeding) %>% 
+  arrange(mean_bleeding) 
+
+# Selecting three participants for the three response groups 
+# Fast = 15 
+# Moderate = 10 
+# Slow = 15
+result_clust <- result_clust %>%
+  mutate(Inflammation_response = case_when(
+    row_number() <= 14 ~ "Slow",
+    row_number() <= 15 ~ "Moderate", # Subjects D41 and D44 have the same delta_bleeding value. By default, D41 is placed in the moderate group, whereas D44 is placed in the slow group. In Lundtorp-Olsen 2024, these two subjects are grouped opposite. 
+    row_number() <= 16 ~ "Slow", 
+    row_number() <= 25 ~ "Moderate",
+    TRUE ~ "Rapid"
+  )) 
+```
+
+```{r adding clustering to phyloseq object}
+result_clust <- result_clust %>%
+  rownames_to_column("Subject")
+# 
+# head(meta$Subject)
+# 
+meta2 <- meta %>%
+  left_join(result_clust %>% select(Subject, Inflammation_response),
+            by = "Subject")
+
+meta2 <- meta2 %>% 
+  select(Subject, sample_id, Inflammation_response)
+
+ps_up %>%
+  sample_data() %>%
+  data.frame() %>%
+  rownames_to_column("sample_id") %>%
+  left_join(.,
+            meta2) %>%
+  column_to_rownames("sample_id") -> sample_data(ps_up)
+```
+
+```{r generate Inflammation_response color palette}
+ps_up %>%
+  generate_color_palette(var = "Inflammation_response", 
+                         pal = c("#00A1D5FF", "#79AF97FF", "#DF8F44FF"), 
+                         print = TRUE, runTsne = TRUE) -> infl_pal
+
+#Colors found here (a part of the jama palette) https://emilhvitfeldt.github.io/r-color-palettes/discrete/ggsci/default_jama/
+```
+
+```{r clusters}
+p_cluster <- result_clust %>% 
+  ggplot(aes(x = mean_plaque, y = mean_bleeding, color = Inflammation_response)) +
+  geom_point(size = 2) + 
+  geom_text_repel(aes(label = Subject), box.padding = 0.3) +
+  theme_minimal() + 
+  scale_color_manual(values = c(
+  "Slow" = "#79AF97FF",
+  "Moderate" = "#00A1D5FF",
+  "Rapid" = "#DF8F44FF")) + 
+  stat_ellipse(aes(group = Inflammation_response), linetype = 2) + 
+  ylab("Difference in BOP%") + xlab("Difference in plaque accumulation") 
+
+p_cluster
+```
+
+```{r difference in BOP%}
+meta <- ps_up %>% 
+  sample_data() %>% 
+  data.frame() %>% 
+  rownames_to_column("sample_id")
+
+# Select important columns and transform to long format
+meta_long <- meta %>% 
+  select(sample_id, Sample, Subject, Time, time, mean_bleeding, Inflammation_response) %>% 
+  pivot_longer(cols = mean_bleeding)
+
+meta_long_delta <- meta_long %>% 
+  group_by(name, Subject) %>% 
+  arrange(time) %>%
+  mutate(delta = value - first(value))
+
+meta_long_delta <- meta_long_delta %>%
+  mutate(Inflammation_response = factor(
+    Inflammation_response,
+    levels = c("Slow", "Moderate", "Rapid")
+  ))
+
+meta_long_delta %>% 
+  filter(Sample == "Plaque") %>% 
+  ggplot(data = ., aes(x=Time, y=delta)) +
+  geom_point(aes(color = Inflammation_response),  position = pd) +
+  geom_line(aes(group=Subject), position = pd, linetype = "dashed", color = "black", linewidth = 0.1) +
+  geom_boxplot(aes(group = interaction(Time, Inflammation_response), 
+                   fill = Inflammation_response), position = pd, outlier.shape = NA, alpha = 0.15) + 
+  theme(strip.placement = "outside") +
+  ylab("BOP%") + xlab("Time of sampling") + 
+  scale_x_discrete(breaks = c("TP1", "TP2", "TP3"), labels = c("Baseline", 
+                                                               "Week 2", "Week 4")) + 
+  theme_linedraw() + theme(strip.placement = "outside") + theme(legend.position = "right") + 
+  scale_color_manual(name = "Responder group", values = infl_pal) +
+  scale_fill_manual(name = "Responder group", values = infl_pal)-> p_bop_delta 
+
+p_bop_delta
+```
+
+```{r difference in plaque accumulation}
+meta <- ps_up %>% 
+  sample_data() %>% 
+  data.frame() %>% 
+  rownames_to_column("sample_id")
+
+# Select important columns and transform to long format
+meta_long <- meta %>% 
+  select(sample_id, Sample, Subject, Time, time, mean_plaque, Inflammation_response) %>% 
+  pivot_longer(cols = mean_plaque)
+
+meta_long_delta <- meta_long %>% 
+  group_by(name, Subject) %>% 
+  arrange(time) %>%
+  mutate(delta = value - first(value))
+
+meta_long_delta <- meta_long_delta %>%
+  mutate(Inflammation_response = factor(
+    Inflammation_response,
+    levels = c("Slow", "Moderate", "Rapid")
+  ))
+
+meta_long_delta %>% 
+  filter(Sample == "Plaque") %>% 
+  ggplot(data = ., aes(x=Time, y=delta)) +
+  geom_point(aes(color = Inflammation_response),  position = pd) +
+  geom_line(aes(group=Subject), position = pd, linetype = "dashed", color = "black", linewidth = 0.1) +
+  geom_boxplot(aes(group = interaction(Time, Inflammation_response), 
+                   fill = Inflammation_response), position = pd, outlier.shape = NA, alpha = 0.15) + 
+  theme(strip.placement = "outside") +
+  ylab("Supragingival plaque accumulation") + xlab("Time of sampling") + 
+  scale_x_discrete(breaks = c("TP1", "TP2", "TP3"), labels = c("Baseline", 
+                                                               "Week 2", "Week 4")) + 
+  theme_linedraw() + theme(strip.placement = "outside") + theme(legend.position = "right") + 
+  #scale_color_manual(values = infl_pal) + 
+  scale_color_manual(name = "Responder group", values = infl_pal) +
+  scale_fill_manual(name = "Responder group", values = infl_pal)-> p_plaque_delta 
+
+p_plaque_delta
+```
+
+```{r}
+p_boxplot <- ggarrange(p_plaque_delta, p_bop_delta, 
+          ncol = 2, nrow = 1, common.legend = TRUE, legend = "right", align = "hv") 
+
+p_boxplot
+
+ggsave("/Volumes/lnp524/PhD/Puplications/Inflammation_trajectories/01_metaphlan_and_humann_import/responder_groups/boxplots_CLO.png", plot = p_boxplot, 
+       units = "cm", width = 40, height = 20, dpi = 300)
+```
+
+```{r creating future delta BOP for baseline comparisons}
+# MetaPhlAn4
+# Extract week 2 values for each participant
+week2_delta <- data.frame(sample_data(ps_up)) %>%
+  filter(Period == "Week 2") %>%
+  distinct(Subject, delta_mean_bleeding)
+
+# Add future delta BOP to all samples
+sample_data(ps_up)$future_delta_mean_bleeding <-
+  week2_delta$delta_mean_bleeding[match(sample_data(ps_up)$Subject, week2_delta$Subject)]
+```
+
+```{r export to .Rdata file}
+save(infl_pal, sub_pal, 
+     ps_up, result_clust, file = here::here("/Volumes/lnp524/PhD/Puplications/Inflammation_trajectories/01_metaphlan_and_humann_import/01_data_infl.Rdata"))
+```
+
+```{r session info}
+sessionInfo()
+```
