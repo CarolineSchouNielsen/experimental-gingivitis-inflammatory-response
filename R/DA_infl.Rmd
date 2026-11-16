@@ -1,0 +1,914 @@
+---
+title: "Differential abundance analyses"
+subtitle: "ARTICLE TITLE"
+author: "Caroline Schou Nielsen"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+output: 
+  html_document: 
+    toc: yes
+    keep_md: no
+---
+
+```{r setup}
+rm(list = ls())
+gc()
+# invisible(lapply(paste0('package:', names(sessionInfo()$otherPkgs)), detach, character.only=TRUE, unload=TRUE))
+# options(java.parameters = "-Xmx80000m")
+```
+
+```{r setup2}
+knitr::opts_chunk$set(warning = FALSE)
+knitr::opts_chunk$set(message = FALSE)
+##knitr::opts_chunk$set(cache=TRUE)
+##knitr::opts_chunk$set(echo = TRUE)
+##knitr::opts_chunk$set(dev = "ragg_png") # https://ragg.r-lib.org/index.html
+##knitr::opts_chunk$set(fig.width = 6) #https://r4ds.had.co.nz/graphics-for-communication.html#figure-sizing
+knitr::opts_chunk$set(fig.asp = 0.618)
+knitr::opts_chunk$set(fig.show = "hold")
+knitr::opts_chunk$set(fig.show = "70%")
+knitr::opts_chunk$set(fig.align = "center")
+```
+
+```{r setup3}
+library(phyloseq)
+library(tidyverse)
+library(dplyr)
+library(ggnewscale)
+library(readr)
+library(speedyseq)
+library(microViz)
+library(GUniFrac)
+#library(ampvis2)
+library(ggpubr)
+library(gginnards)
+library(scales)
+library(reshape2)
+library(ape)
+library(GGally)
+library(rstatix)
+library(ggpubr)
+library(microbiomeMarker)
+library(DESeq2)
+library(ggrepel)
+library(magrittr)
+library(ANCOMBC)
+library(microeco)
+library(maaslin3)
+```
+
+```{r setup4}
+'%!in%' <- function(x,y)!('%in%'(x,y))
+
+source_dir = "https://raw.githubusercontent.com/fconstancias/DivComAnalyses/master/R/"
+
+source(paste0(source_dir,"phyloseq_taxa_tests.R"))
+source(paste0(source_dir,"phyloseq_normalisation.R"))
+source(paste0(source_dir,"phyloseq_heatmap.R"))
+source(paste0(source_dir,"phyloseq_varia.R"))
+source(paste0(source_dir,"phyloseq_microeco.R"))
+```
+
+```{r setup5}
+# Differential abundance analysis parameters
+#source("https://raw.githubusercontent.com/fconstancias/KU_Caroline/refs/heads/main/code/functions/phyloseq_functions.R")
+source("/Volumes/lnp524/PhD/Puplications/Inflammation_trajectories/04_DA/maaslin3/phyloseq_diff_abundance_CSN.R")
+
+# Parameters for phyloseq_diff_abundance(): 
+
+#' @title Differiential feature analyses wrapper for Microbiome analyses
+#' @author Florentin Constancias
+#' @description 
+#' This script performs a comparative analysis of various approaches for microbiome studies, 
+#' including metagenomics, metabarcoding, metabolomics, and transcriptomics. The script 
+#' calculates the number of publications, environments analyzed, and the methods applied.
+#' 
+#' @param ps_tmp A phyloseq object. Defaults to saliva samples (`ps_up %>% subset_samples(Sample == "Saliva")`).
+#' @param approach Character vector specifying the analysis approach. Options include:
+#'   - "run_lefse": Linear discriminant analysis (LEfSe)
+#'   - "run_ancom": Analysis of composition of microbiomes (ANCOM)
+#'   - "ancombc2": ANCOMBC2 method for differential abundance
+#'   - "maaslin3": Multivariate analysis using Maaslin3
+#'   - "trans_diff_rf": Transformation-based Random Forest
+#'   - "classifier_rf": Random Forest classifier
+#' @param glom Taxonomic rank for agglomeration (e.g., "Species"). Set to `NULL` to skip agglomeration.
+#' @param unclassified_name Name for unclassified taxa (default: "UNCLASSIFIED").
+#' @param taxa_rank Taxonomic rank for differential abundance (default: "all").
+#' @param density Density metric to normalize counts. Default is "Quant".
+#' @param comp_group Grouping variable for comparison (e.g., "Time").
+#' @param palette Color palette for plots.
+#' @param pvalue_cutoff p-value cutoff for significance.
+#' @param p_adjust Method for p-value adjustment (e.g., "BH" for Benjamini-Hochberg).
+#' @param lefse_* Parameters specific to the LEfSe method.
+#' @param maaslin3_* Parameters specific to Maaslin3 analysis.
+#' @param ancombc2_* Parameters specific to ANCOMBC2 analysis.
+#' @param linda_* Parameters specific to LINDA (if used in the future).
+#' @param rf_* Parameters specific to Random Forest methods.
+#' @param trans_diff_rf_MeanDecreaseGini_cutoff Gini index cutoff for feature importance in Random Forest.
+```
+
+```{r MetaPhlAn}
+# Load phyloseq MetaPhlAn object
+# Not included in GitHub repo due to size
+# See README for data access information
+
+load(here::here("/Volumes/lnp524/PhD/Puplications/Inflammation_trajectories/01_metaphlan_and_humann_import/01_data_infl.Rdata"))
+
+# Quick control that data is right
+ps_up %>% 
+  sample_data() %>% 
+  data.frame() %>% 
+  DT::datatable()
+```
+
+```{r HUMAnN}
+# Load phyloseq HUMAnN object
+# Not included in GitHub repo due to size
+# See README for data access information
+
+load(here::here("/Volumes/lnp524/PhD/Puplications/Inflammation_trajectories/01_metaphlan_and_humann_import/01_humann_data_infl.Rdata"))
+
+# Quick control that data is right
+pw_mia %>% 
+  sample_data() %>% 
+  data.frame() %>% 
+  DT::datatable()
+```
+
+```{r rename HUMAnN column names to taxonomical order termiology, warning=FALSE}
+pw_mia %>%
+  tax_mutate(Kingdom = "MetaCyc",
+             Phylum = Superclass1,
+             Class = Superclass1,
+             Order = Superclass1,
+             Family = Superclass2,
+             Genus = Superclass2,
+             Species = feature) %>%
+  physeq_sel_tax_table(c("Kingdom", "Phylum", "Class", "Order", "Family", "Genus", "Species")) -> pw_mia
+```
+
+# Metaphlan
+## Saliva
+```{r MetaPhlAn saliva baseline}
+# formula = "~ Inflammation_response"
+# reference = slow
+ps_up %>%
+  subset_samples(Period == "Baseline" & Sample == "Saliva") %>%
+  subset_taxa(Class != "UNCLASSIFIED") %>%
+  transform_sample_counts(function(x) x/sum(x) * 1) %>%
+  phyloseq_diff_abundance(ps_tmp = .,
+                          approach = "maaslin3",
+                          formula = "~ Inflammation_response",
+                          glom = "Species",
+                          taxa_rank = "Species",
+                          masslin3_output_dir = "/Volumes/lnp524/PhD/Puplications/Inflammation_trajectories/04_DA/maaslin3/tax_saliva/baseline_ref_slow",
+                          maaslin3_random_effects = NULL, 
+                          maaslin3_reference = "Inflammation_response,Slow", 
+                          maaslin3_lefse_plot = FALSE,
+                          pvalue_cutoff = 0.05
+                          ) -> p # Flo has to add the maaslin3_random_effects in his Github function
+```
+
+```{r MetaPhlAn saliva baseline}
+# formula = "~ Inflammation_response"
+# reference = moderate
+ps_up %>%
+  subset_samples(Period == "Baseline" & Sample == "Saliva") %>%
+  subset_taxa(Class != "UNCLASSIFIED") %>%
+  transform_sample_counts(function(x) x/sum(x) * 1) %>%
+  phyloseq_diff_abundance(ps_tmp = .,
+                          approach = "maaslin3",
+                          formula = "~ Inflammation_response",
+                          glom = "Species",
+                          taxa_rank = "Species",
+                          masslin3_output_dir = "/Volumes/lnp524/PhD/Puplications/Inflammation_trajectories/04_DA/maaslin3/tax_saliva/baseline_ref_moderate",
+                          maaslin3_random_effects = NULL, 
+                          maaslin3_reference = "Inflammation_response,Moderate", 
+                          maaslin3_lefse_plot = FALSE,
+                          pvalue_cutoff = 0.05
+                          ) -> p 
+```
+
+```{r MetaPhlAn saliva baseline}
+# formula = "~ future_delta_mean_bleeding"
+ps_up %>%
+  subset_samples(Period == "Baseline" & Sample == "Saliva") %>%
+  subset_taxa(Class != "UNCLASSIFIED") %>%
+  transform_sample_counts(function(x) x/sum(x) * 1) %>%
+  phyloseq_diff_abundance(ps_tmp = .,
+                          approach = "maaslin3",
+                          formula = "~ future_delta_mean_bleeding",
+                          glom = "Species",
+                          taxa_rank = "Species",
+                          masslin3_output_dir = "/Volumes/lnp524/PhD/Puplications/Inflammation_trajectories/04_DA/maaslin3/tax_saliva/baseline_future",
+                          maaslin3_random_effects = NULL, 
+                          maaslin3_reference = NULL, 
+                          maaslin3_lefse_plot = FALSE,
+                          pvalue_cutoff = 0.05
+                          ) -> p
+```
+
+```{r MetaPhlAn saliva baseline}
+# Genus
+# formula = "~ Inflammation_response"
+# reference = slow
+ps_up %>%
+  subset_samples(Period == "Baseline" & Sample == "Saliva") %>%
+  subset_taxa(Class != "UNCLASSIFIED") %>%
+  transform_sample_counts(function(x) x/sum(x) * 1) %>%
+  phyloseq_diff_abundance(ps_tmp = .,
+                          approach = "maaslin3",
+                          formula = "~ Inflammation_response",
+                          glom = "Genus",
+                          taxa_rank = "Genus",
+                          masslin3_output_dir = "/Volumes/lnp524/PhD/Puplications/Inflammation_trajectories/04_DA/maaslin3/genus/tax_saliva_ref_slow",
+                          maaslin3_random_effects = NULL, 
+                          maaslin3_reference = "Inflammation_response,Slow", 
+                          maaslin3_lefse_plot = FALSE,
+                          pvalue_cutoff = 0.05
+                          ) -> p
+```
+
+```{r MetaPhlAn saliva baseline}
+# Genus
+# formula = "~ Inflammation_response"
+# reference = moderate
+ps_up %>%
+  subset_samples(Period == "Baseline" & Sample == "Saliva") %>%
+  subset_taxa(Class != "UNCLASSIFIED") %>%
+  transform_sample_counts(function(x) x/sum(x) * 1) %>%
+  phyloseq_diff_abundance(ps_tmp = .,
+                          approach = "maaslin3",
+                          formula = "~ Inflammation_response",
+                          glom = "Genus",
+                          taxa_rank = "Genus",
+                          masslin3_output_dir = "/Volumes/lnp524/PhD/Puplications/Inflammation_trajectories/04_DA/maaslin3/genus/tax_saliva_ref_moderate",
+                          maaslin3_random_effects = NULL, 
+                          maaslin3_reference = "Inflammation_response,Moderate", 
+                          maaslin3_lefse_plot = FALSE,
+                          pvalue_cutoff = 0.05
+                          ) -> p
+```
+
+```{r MetaPhlAn saliva baseline}
+# Genus
+# formula = "~ future_delta_mean_bleeding"
+ps_up %>%
+  subset_samples(Period == "Baseline" & Sample == "Saliva") %>%
+  subset_taxa(Class != "UNCLASSIFIED") %>%
+  transform_sample_counts(function(x) x/sum(x) * 1) %>%
+  phyloseq_diff_abundance(ps_tmp = .,
+                          approach = "maaslin3",
+                          formula = "~ future_delta_mean_bleeding",
+                          glom = "Genus",
+                          taxa_rank = "Genus",
+                          masslin3_output_dir = "/Volumes/lnp524/PhD/Puplications/Inflammation_trajectories/04_DA/maaslin3/genus/tax_saliva_future",
+                          maaslin3_random_effects = NULL, 
+                          maaslin3_reference = NULL, 
+                          maaslin3_lefse_plot = FALSE,
+                          pvalue_cutoff = 0.05
+                          ) -> p
+```
+
+```{r MetaPhlAn saliva week 2}
+# formula = "~ Inflammation_response"
+# reference = slow
+ps_up %>%
+  subset_samples(Period == "Week 2" & Sample == "Saliva") %>%
+  subset_taxa(Class != "UNCLASSIFIED") %>%
+  transform_sample_counts(function(x) x/sum(x) * 1) %>%
+  phyloseq_diff_abundance(ps_tmp = .,
+                          approach = "maaslin3",
+                          formula = "~ Inflammation_response",
+                          glom = "Species",
+                          taxa_rank = "Species",
+                          masslin3_output_dir = "/Volumes/lnp524/PhD/Puplications/Inflammation_trajectories/04_DA/maaslin3/tax_saliva/week2_ref_slow",
+                          maaslin3_random_effects = NULL, 
+                          maaslin3_reference = "Inflammation_response,Slow", 
+                          maaslin3_lefse_plot = FALSE,
+                          pvalue_cutoff = 0.05
+                          ) -> p
+```
+
+```{r MetaPhlAn saliva week 2}
+# formula = "~ Inflammation_response"
+# reference = moderate
+ps_up %>%
+  subset_samples(Period == "Week 2" & Sample == "Saliva") %>%
+  subset_taxa(Class != "UNCLASSIFIED") %>%
+  transform_sample_counts(function(x) x/sum(x) * 1) %>%
+  phyloseq_diff_abundance(ps_tmp = .,
+                          approach = "maaslin3",
+                          formula = "~ Inflammation_response",
+                          glom = "Species",
+                          taxa_rank = "Species",
+                          masslin3_output_dir = "/Volumes/lnp524/PhD/Puplications/Inflammation_trajectories/04_DA/maaslin3/tax_saliva/week2_ref_moderate",
+                          maaslin3_random_effects = NULL, 
+                          maaslin3_reference = "Inflammation_response,Moderate", 
+                          maaslin3_lefse_plot = FALSE,
+                          pvalue_cutoff = 0.05
+                          ) -> p 
+```
+
+```{r MetaPhlAn saliva week 2}
+# formula = "~ delta_mean_bleeding"
+ps_up %>%
+  subset_samples(Period == "Week 2" & Sample == "Saliva") %>%
+  subset_taxa(Class != "UNCLASSIFIED") %>%
+  transform_sample_counts(function(x) x/sum(x) * 1) %>%
+  phyloseq_diff_abundance(ps_tmp = .,
+                          approach = "maaslin3",
+                          formula = "~ delta_mean_bleeding",
+                          glom = "Species",
+                          taxa_rank = "Species",
+                          masslin3_output_dir = "/Volumes/lnp524/PhD/Puplications/Inflammation_trajectories/04_DA/maaslin3/tax_saliva/week2_delta",
+                          maaslin3_random_effects = NULL, 
+                          maaslin3_reference = NULL, 
+                          maaslin3_lefse_plot = FALSE,
+                          pvalue_cutoff = 0.05
+                          ) -> p
+```
+
+```{r MetaPhlAn saliva week 4}
+# formula = "~ Inflammation_response"
+# reference = slow
+ps_up %>%
+  subset_samples(Period == "Week 4" & Sample == "Saliva") %>%
+  subset_taxa(Class != "UNCLASSIFIED") %>%
+  transform_sample_counts(function(x) x/sum(x) * 1) %>%
+  phyloseq_diff_abundance(ps_tmp = .,
+                          approach = "maaslin3",
+                          formula = "~ Inflammation_response",
+                          glom = "Species",
+                          taxa_rank = "Species",
+                          masslin3_output_dir = "/Volumes/lnp524/PhD/Puplications/Inflammation_trajectories/04_DA/maaslin3/tax_saliva/week4_ref_slow",
+                          maaslin3_random_effects = NULL, 
+                          maaslin3_reference = "Inflammation_response,Slow", 
+                          maaslin3_lefse_plot = FALSE,
+                          pvalue_cutoff = 0.05,
+                          maaslin3_summary_plot_first_n = 2
+                          ) -> p
+```
+
+```{r MetaPhlAn saliva week 4}
+# formula = "~ Inflammation_response"
+# reference = moderate
+ps_up %>%
+  subset_samples(Period == "Week 4" & Sample == "Saliva") %>%
+  subset_taxa(Class != "UNCLASSIFIED") %>%
+  transform_sample_counts(function(x) x/sum(x) * 1) %>%
+  phyloseq_diff_abundance(ps_tmp = .,
+                          approach = "maaslin3",
+                          formula = "~ Inflammation_response",
+                          glom = "Species",
+                          taxa_rank = "Species",
+                          masslin3_output_dir = "/Volumes/lnp524/PhD/Puplications/Inflammation_trajectories/04_DA/maaslin3/tax_saliva/week4_ref_moderate",
+                          maaslin3_random_effects = NULL, 
+                          maaslin3_reference = "Inflammation_response,Moderate", 
+                          maaslin3_lefse_plot = FALSE,
+                          pvalue_cutoff = 0.05
+                          ) -> p 
+```
+
+## Plaque
+```{r MetaPhlAn plaque baseline}
+# formula = "~ Inflammation_response"
+# reference = slow
+ps_up %>%
+  subset_samples(Period == "Baseline" & Sample == "Plaque") %>%
+  subset_taxa(Class != "UNCLASSIFIED") %>%
+  transform_sample_counts(function(x) x/sum(x) * 1) %>%
+  phyloseq_diff_abundance(ps_tmp = .,
+                          approach = "maaslin3",
+                          formula = "~ Inflammation_response",
+                          glom = "Species",
+                          taxa_rank = "Species",
+                          masslin3_output_dir = "/Volumes/lnp524/PhD/Puplications/Inflammation_trajectories/04_DA/maaslin3/tax_plaque/baseline_ref_slow",
+                          maaslin3_random_effects = NULL, 
+                          maaslin3_reference = "Inflammation_response,Slow", 
+                          maaslin3_lefse_plot = FALSE,
+                          pvalue_cutoff = 0.05
+                          ) -> p 
+```
+
+```{r MetaPhlAn plaque baseline}
+# formula = "~ Inflammation_response"
+# reference = moderate
+ps_up %>%
+  subset_samples(Period == "Baseline" & Sample == "Plaque") %>%
+  subset_taxa(Class != "UNCLASSIFIED") %>%
+  transform_sample_counts(function(x) x/sum(x) * 1) %>%
+  phyloseq_diff_abundance(ps_tmp = .,
+                          approach = "maaslin3",
+                          formula = "~ Inflammation_response",
+                          glom = "Species",
+                          taxa_rank = "Species",
+                          masslin3_output_dir = "/Volumes/lnp524/PhD/Puplications/Inflammation_trajectories/04_DA/maaslin3/tax_plaque/baseline_ref_moderate",
+                          maaslin3_random_effects = NULL, 
+                          maaslin3_reference = "Inflammation_response,Moderate", 
+                          maaslin3_lefse_plot = FALSE,
+                          pvalue_cutoff = 0.05
+                          ) -> p 
+```
+
+```{r MetaPhlAn plaque baseline}
+# formula = "~ future_delta_mean_bleeding"
+ps_up %>%
+  subset_samples(Period == "Baseline" & Sample == "Plaque") %>%
+  subset_taxa(Class != "UNCLASSIFIED") %>%
+  transform_sample_counts(function(x) x/sum(x) * 1) %>%
+  phyloseq_diff_abundance(ps_tmp = .,
+                          approach = "maaslin3",
+                          formula = "~ future_delta_mean_bleeding",
+                          glom = "Species",
+                          taxa_rank = "Species",
+                          masslin3_output_dir = "/Volumes/lnp524/PhD/Puplications/Inflammation_trajectories/04_DA/maaslin3/tax_plaque/baseline_future",
+                          maaslin3_random_effects = NULL, 
+                          maaslin3_reference = NULL, 
+                          maaslin3_lefse_plot = FALSE,
+                          pvalue_cutoff = 0.05
+                          ) -> p
+```
+
+```{r MetaPhlAn plaque baseline}
+# Genus
+# formula = "~ Inflammation_response"
+# reference = slow
+ps_up %>%
+  subset_samples(Period == "Baseline" & Sample == "Plaque") %>%
+  subset_taxa(Class != "UNCLASSIFIED") %>%
+  transform_sample_counts(function(x) x/sum(x) * 1) %>%
+  phyloseq_diff_abundance(ps_tmp = .,
+                          approach = "maaslin3",
+                          formula = "~ Inflammation_response",
+                          glom = "Genus",
+                          taxa_rank = "Genus",
+                          masslin3_output_dir = "/Volumes/lnp524/PhD/Puplications/Inflammation_trajectories/04_DA/maaslin3/genus/tax_plaque_ref_slow",
+                          maaslin3_random_effects = NULL, 
+                          maaslin3_reference = "Inflammation_response,Slow", 
+                          maaslin3_lefse_plot = FALSE,
+                          pvalue_cutoff = 0.05
+                          ) -> p
+```
+
+```{r MetaPhlAn plaque baseline}
+# Genus
+# formula = "~ Inflammation_response"
+# reference = moderate
+ps_up %>%
+  subset_samples(Period == "Baseline" & Sample == "Plaque") %>%
+  subset_taxa(Class != "UNCLASSIFIED") %>%
+  transform_sample_counts(function(x) x/sum(x) * 1) %>%
+  phyloseq_diff_abundance(ps_tmp = .,
+                          approach = "maaslin3",
+                          formula = "~ Inflammation_response",
+                          glom = "Genus",
+                          taxa_rank = "Genus",
+                          masslin3_output_dir = "/Volumes/lnp524/PhD/Puplications/Inflammation_trajectories/04_DA/maaslin3/genus/tax_plaque_ref_moderate",
+                          maaslin3_random_effects = NULL, 
+                          maaslin3_reference = "Inflammation_response,Moderate", 
+                          maaslin3_lefse_plot = FALSE,
+                          pvalue_cutoff = 0.05
+                          ) -> p
+```
+
+```{r MetaPhlAn plaque baseline}
+# Genus
+# formula = "~ future_delta_mean_bleeding"
+ps_up %>%
+  subset_samples(Period == "Baseline" & Sample == "Plaque") %>%
+  subset_taxa(Class != "UNCLASSIFIED") %>%
+  transform_sample_counts(function(x) x/sum(x) * 1) %>%
+  phyloseq_diff_abundance(ps_tmp = .,
+                          approach = "maaslin3",
+                          formula = "~ future_delta_mean_bleeding",
+                          glom = "Genus",
+                          taxa_rank = "Genus",
+                          masslin3_output_dir = "/Volumes/lnp524/PhD/Puplications/Inflammation_trajectories/04_DA/maaslin3/genus/tax_plaque_future",
+                          maaslin3_random_effects = NULL, 
+                          maaslin3_reference = NULL, 
+                          maaslin3_lefse_plot = FALSE,
+                          pvalue_cutoff = 0.05
+                          ) -> p
+```
+
+```{r MetaPhlAn plaque week 2}
+# formula = "~ Inflammation_response"
+# reference = slow
+ps_up %>%
+  subset_samples(Period == "Week 2" & Sample == "Plaque") %>%
+  subset_taxa(Class != "UNCLASSIFIED") %>%
+  transform_sample_counts(function(x) x/sum(x) * 1) %>%
+  phyloseq_diff_abundance(ps_tmp = .,
+                          approach = "maaslin3",
+                          formula = "~ Inflammation_response",
+                          glom = "Species",
+                          taxa_rank = "Species",
+                          masslin3_output_dir = "/Volumes/lnp524/PhD/Puplications/Inflammation_trajectories/04_DA/maaslin3/tax_plaque/week2_ref_slow",
+                          maaslin3_random_effects = NULL, 
+                          maaslin3_reference = "Inflammation_response,Slow", 
+                          maaslin3_lefse_plot = FALSE,
+                          pvalue_cutoff = 0.05
+                          ) -> p
+```
+
+```{r MetaPhlAn plaque week 2}
+# formula = "~ Inflammation_response"
+# reference = moderate
+ps_up %>%
+  subset_samples(Period == "Week 2" & Sample == "Plaque") %>%
+  subset_taxa(Class != "UNCLASSIFIED") %>%
+  transform_sample_counts(function(x) x/sum(x) * 1) %>%
+  phyloseq_diff_abundance(ps_tmp = .,
+                          approach = "maaslin3",
+                          formula = "~ Inflammation_response",
+                          glom = "Species",
+                          taxa_rank = "Species",
+                          masslin3_output_dir = "/Volumes/lnp524/PhD/Puplications/Inflammation_trajectories/04_DA/maaslin3/tax_plaque/week2_ref_moderate",
+                          maaslin3_random_effects = NULL, 
+                          maaslin3_reference = "Inflammation_response,Moderate", 
+                          maaslin3_lefse_plot = FALSE,
+                          pvalue_cutoff = 0.05
+                          ) -> p
+```
+
+```{r MetaPhlAn plaque week 2}
+# formula = "~ delta_mean_bleeding"
+ps_up %>%
+  subset_samples(Period == "Week 2" & Sample == "Plaque") %>%
+  subset_taxa(Class != "UNCLASSIFIED") %>%
+  transform_sample_counts(function(x) x/sum(x) * 1) %>%
+  phyloseq_diff_abundance(ps_tmp = .,
+                          approach = "maaslin3",
+                          formula = "~ delta_mean_bleeding",
+                          glom = "Species",
+                          taxa_rank = "Species",
+                          masslin3_output_dir = "/Volumes/lnp524/PhD/Puplications/Inflammation_trajectories/04_DA/maaslin3/tax_plaque/week2_delta",
+                          maaslin3_random_effects = NULL, 
+                          maaslin3_reference = NULL, 
+                          maaslin3_lefse_plot = FALSE,
+                          pvalue_cutoff = 0.05
+                          ) -> p
+```
+
+```{r MetaPhlAn plaque week 4}
+# formula = "~ Inflammation_response"
+# reference = slow
+ps_up %>%
+  subset_samples(Period == "Week 4" & Sample == "Plaque") %>%
+  subset_taxa(Class != "UNCLASSIFIED") %>%
+  transform_sample_counts(function(x) x/sum(x) * 1) %>%
+  phyloseq_diff_abundance(ps_tmp = .,
+                          approach = "maaslin3",
+                          formula = "~ Inflammation_response",
+                          glom = "Species",
+                          taxa_rank = "Species",
+                          masslin3_output_dir = "/Volumes/lnp524/PhD/Puplications/Inflammation_trajectories/04_DA/maaslin3/tax_plaque/week4_ref_slow",
+                          maaslin3_random_effects = NULL, 
+                          maaslin3_reference = "Inflammation_response,Slow", 
+                          maaslin3_lefse_plot = FALSE,
+                          pvalue_cutoff = 0.05
+                          ) -> p
+```
+
+```{r MetaPhlAn plaque week 4}
+# formula = "~ Inflammation_response"
+# reference = moderate
+ps_up %>%
+  subset_samples(Period == "Week 4" & Sample == "Plaque") %>%
+  subset_taxa(Class != "UNCLASSIFIED") %>%
+  transform_sample_counts(function(x) x/sum(x) * 1) %>%
+  phyloseq_diff_abundance(ps_tmp = .,
+                          approach = "maaslin3",
+                          formula = "~ Inflammation_response",
+                          glom = "Species",
+                          taxa_rank = "Species",
+                          masslin3_output_dir = "/Volumes/lnp524/PhD/Puplications/Inflammation_trajectories/04_DA/maaslin3/tax_plaque/week4_ref_moderate",
+                          maaslin3_random_effects = NULL, 
+                          maaslin3_reference = "Inflammation_response,Moderate", 
+                          maaslin3_lefse_plot = FALSE,
+                          pvalue_cutoff = 0.05
+                          ) -> p
+```
+
+# HUMAnN
+## Saliva
+```{r HUMAnN saliva baseline}
+# formula = "~ Inflammation_response"
+# reference = slow
+pw_mia %>%
+  subset_samples(Period == "Baseline" & Sample == "Saliva") %>%
+  subset_taxa(Class != "UNCLASSIFIED") %>%
+  transform_sample_counts(function(x) x/sum(x) * 1) %>%
+  phyloseq_diff_abundance(ps_tmp = .,
+                          approach = "maaslin3",
+                          formula = "~ Inflammation_response",
+                          glom = "Species",
+                          taxa_rank = "Species",
+                          masslin3_output_dir = "/Volumes/lnp524/PhD/Puplications/Inflammation_trajectories/04_DA/maaslin3/pway_saliva/baseline_ref_slow",
+                          maaslin3_random_effects = NULL, 
+                          maaslin3_reference = "Inflammation_response,Slow", 
+                          maaslin3_lefse_plot = FALSE,
+                          pvalue_cutoff = 0.05
+                          ) -> p 
+```
+
+```{r HUMAnN saliva baseline}
+# formula = "~ Inflammation_response"
+# reference = moderate
+pw_mia %>%
+  subset_samples(Period == "Baseline" & Sample == "Saliva") %>%
+  subset_taxa(Class != "UNCLASSIFIED") %>%
+  transform_sample_counts(function(x) x/sum(x) * 1) %>%
+  phyloseq_diff_abundance(ps_tmp = .,
+                          approach = "maaslin3",
+                          formula = "~ Inflammation_response",
+                          glom = "Species",
+                          taxa_rank = "Species",
+                          masslin3_output_dir = "/Volumes/lnp524/PhD/Puplications/Inflammation_trajectories/04_DA/maaslin3/pway_saliva/baseline_ref_moderate",
+                          maaslin3_random_effects = NULL, 
+                          maaslin3_reference = "Inflammation_response,Moderate", 
+                          maaslin3_lefse_plot = FALSE,
+                          pvalue_cutoff = 0.05
+                          ) -> p 
+```
+
+```{r HUMAnN saliva baseline}
+# formula = "~ future_delta_mean_bleeding"
+pw_mia %>%
+  subset_samples(Period == "Baseline" & Sample == "Saliva") %>%
+  subset_taxa(Class != "UNCLASSIFIED") %>%
+  transform_sample_counts(function(x) x/sum(x) * 1) %>%
+  phyloseq_diff_abundance(ps_tmp = .,
+                          approach = "maaslin3",
+                          formula = "~ future_delta_mean_bleeding",
+                          glom = "Species",
+                          taxa_rank = "Species",
+                          masslin3_output_dir = "/Volumes/lnp524/PhD/Puplications/Inflammation_trajectories/04_DA/maaslin3/pway_saliva/baseline_future",
+                          maaslin3_random_effects = NULL, 
+                          maaslin3_reference = NULL, 
+                          maaslin3_lefse_plot = FALSE,
+                          pvalue_cutoff = 0.05
+                          ) -> p
+```
+
+```{r HUMAnN saliva week 2}
+# formula = "~ Inflammation_response"
+# reference = slow
+pw_mia %>%
+  subset_samples(Period == "Week 2" & Sample == "Saliva") %>%
+  subset_taxa(Class != "UNCLASSIFIED") %>%
+  transform_sample_counts(function(x) x/sum(x) * 1) %>%
+  phyloseq_diff_abundance(ps_tmp = .,
+                          approach = "maaslin3",
+                          formula = "~ Inflammation_response",
+                          glom = "Species",
+                          taxa_rank = "Species",
+                          masslin3_output_dir = "/Volumes/lnp524/PhD/Puplications/Inflammation_trajectories/04_DA/maaslin3/pway_saliva/week2_ref_slow",
+                          maaslin3_random_effects = NULL, 
+                          maaslin3_reference = "Inflammation_response,Slow", 
+                          maaslin3_lefse_plot = FALSE,
+                          pvalue_cutoff = 0.05
+                          ) -> p 
+```
+
+```{r HUMAnN saliva week 2}
+# formula = "~ Inflammation_response"
+# reference = moderate
+pw_mia %>%
+  subset_samples(Period == "Week 2" & Sample == "Saliva") %>%
+  subset_taxa(Class != "UNCLASSIFIED") %>%
+  transform_sample_counts(function(x) x/sum(x) * 1) %>%
+  phyloseq_diff_abundance(ps_tmp = .,
+                          approach = "maaslin3",
+                          formula = "~ Inflammation_response",
+                          glom = "Species",
+                          taxa_rank = "Species",
+                          masslin3_output_dir = "/Volumes/lnp524/PhD/Puplications/Inflammation_trajectories/04_DA/maaslin3/pway_saliva/week2_ref_moderate",
+                          maaslin3_random_effects = NULL, 
+                          maaslin3_reference = "Inflammation_response,Moderate", 
+                          maaslin3_lefse_plot = FALSE,
+                          pvalue_cutoff = 0.05
+                          ) -> p 
+```
+
+```{r HUMAnN saliva week 2}
+# formula = "~ delta_mean_bleeding"
+pw_mia %>%
+  subset_samples(Period == "Week 2" & Sample == "Saliva") %>%
+  subset_taxa(Class != "UNCLASSIFIED") %>%
+  transform_sample_counts(function(x) x/sum(x) * 1) %>%
+  phyloseq_diff_abundance(ps_tmp = .,
+                          approach = "maaslin3",
+                          formula = "~ delta_mean_bleeding",
+                          glom = "Species",
+                          taxa_rank = "Species",
+                          masslin3_output_dir = "/Volumes/lnp524/PhD/Puplications/Inflammation_trajectories/04_DA/maaslin3/pway_saliva/week2_delta",
+                          maaslin3_random_effects = NULL, 
+                          maaslin3_reference = NULL, 
+                          maaslin3_lefse_plot = FALSE,
+                          pvalue_cutoff = 0.05
+                          ) -> p
+```
+
+```{r HUMAnN saliva week 4}
+# formula = "~ Inflammation_response"
+# reference = slow
+pw_mia %>%
+  subset_samples(Period == "Week 4" & Sample == "Saliva") %>%
+  subset_taxa(Class != "UNCLASSIFIED") %>%
+  transform_sample_counts(function(x) x/sum(x) * 1) %>%
+  phyloseq_diff_abundance(ps_tmp = .,
+                          approach = "maaslin3",
+                          formula = "~ Inflammation_response",
+                          glom = "Species",
+                          taxa_rank = "Species",
+                          masslin3_output_dir = "/Volumes/lnp524/PhD/Puplications/Inflammation_trajectories/04_DA/maaslin3/pway_saliva/week4_ref_slow",
+                          maaslin3_random_effects = NULL, 
+                          maaslin3_reference = "Inflammation_response,Slow", 
+                          maaslin3_lefse_plot = FALSE,
+                          pvalue_cutoff = 0.05
+                          ) -> p 
+```
+
+```{r HUMAnN saliva week 4}
+# formula = "~ Inflammation_response"
+# reference = moderate
+pw_mia %>%
+  subset_samples(Period == "Week 4" & Sample == "Saliva") %>%
+  subset_taxa(Class != "UNCLASSIFIED") %>%
+  transform_sample_counts(function(x) x/sum(x) * 1) %>%
+  phyloseq_diff_abundance(ps_tmp = .,
+                          approach = "maaslin3",
+                          formula = "~ Inflammation_response",
+                          glom = "Species",
+                          taxa_rank = "Species",
+                          masslin3_output_dir = "/Volumes/lnp524/PhD/Puplications/Inflammation_trajectories/04_DA/maaslin3/pway_saliva/week4_ref_moderate",
+                          maaslin3_random_effects = NULL, 
+                          maaslin3_reference = "Inflammation_response,Moderate", 
+                          maaslin3_lefse_plot = FALSE,
+                          pvalue_cutoff = 0.05
+                          ) -> p 
+```
+
+## Plaque
+```{r HUMAnN plaque baseline}
+# formula = "~ Inflammation_response"
+# reference = slow
+pw_mia %>%
+  subset_samples(Period == "Baseline" & Sample == "Plaque") %>%
+  subset_taxa(Class != "UNCLASSIFIED") %>%
+  transform_sample_counts(function(x) x/sum(x) * 1) %>%
+  phyloseq_diff_abundance(ps_tmp = .,
+                          approach = "maaslin3",
+                          formula = "~ Inflammation_response",
+                          glom = "Species",
+                          taxa_rank = "Species",
+                          masslin3_output_dir = "/Volumes/lnp524/PhD/Puplications/Inflammation_trajectories/04_DA/maaslin3/pway_plaque/baseline_ref_slow",
+                          maaslin3_random_effects = NULL, 
+                          maaslin3_reference = "Inflammation_response,Slow", 
+                          maaslin3_lefse_plot = FALSE,
+                          pvalue_cutoff = 0.05
+                          ) -> p 
+```
+
+```{r HUMAnN plaque baseline}
+# formula = "~ Inflammation_response"
+# reference = moderate
+pw_mia %>%
+  subset_samples(Period == "Baseline" & Sample == "Plaque") %>%
+  subset_taxa(Class != "UNCLASSIFIED") %>%
+  transform_sample_counts(function(x) x/sum(x) * 1) %>%
+  phyloseq_diff_abundance(ps_tmp = .,
+                          approach = "maaslin3",
+                          formula = "~ Inflammation_response",
+                          glom = "Species",
+                          taxa_rank = "Species",
+                          masslin3_output_dir = "/Volumes/lnp524/PhD/Puplications/Inflammation_trajectories/04_DA/maaslin3/pway_plaque/baseline_ref_moderate",
+                          maaslin3_random_effects = NULL, 
+                          maaslin3_reference = "Inflammation_response,Moderate", 
+                          maaslin3_lefse_plot = FALSE,
+                          pvalue_cutoff = 0.05
+                          ) -> p 
+```
+
+```{r HUMAnN plaque baseline}
+# formula = "~ future_delta_mean_bleeding"
+pw_mia %>%
+  subset_samples(Period == "Baseline" & Sample == "Plaque") %>%
+  subset_taxa(Class != "UNCLASSIFIED") %>%
+  transform_sample_counts(function(x) x/sum(x) * 1) %>%
+  phyloseq_diff_abundance(ps_tmp = .,
+                          approach = "maaslin3",
+                          formula = "~ future_delta_mean_bleeding",
+                          glom = "Species",
+                          taxa_rank = "Species",
+                          masslin3_output_dir = "/Volumes/lnp524/PhD/Puplications/Inflammation_trajectories/04_DA/maaslin3/pway_plaque/baseline_future",
+                          maaslin3_random_effects = NULL, 
+                          maaslin3_reference = NULL, 
+                          maaslin3_lefse_plot = FALSE,
+                          pvalue_cutoff = 0.05
+                          ) -> p
+```
+
+```{r HUMAnN plaque week 2}
+# formula = "~ Inflammation_response"
+# reference = slow
+pw_mia %>%
+  subset_samples(Period == "Week 2" & Sample == "Plaque") %>%
+  subset_taxa(Class != "UNCLASSIFIED") %>%
+  transform_sample_counts(function(x) x/sum(x) * 1) %>%
+  phyloseq_diff_abundance(ps_tmp = .,
+                          approach = "maaslin3",
+                          formula = "~ Inflammation_response",
+                          glom = "Species",
+                          taxa_rank = "Species",
+                          masslin3_output_dir = "/Volumes/lnp524/PhD/Puplications/Inflammation_trajectories/04_DA/maaslin3/pway_plaque/week2_ref_slow",
+                          maaslin3_random_effects = NULL, 
+                          maaslin3_reference = "Inflammation_response,Slow", 
+                          maaslin3_lefse_plot = FALSE,
+                          pvalue_cutoff = 0.05
+                          ) -> p 
+```
+
+```{r HUMAnN plaque week 2}
+# formula = "~ Inflammation_response"
+# reference = moderate
+pw_mia %>%
+  subset_samples(Period == "Week 2" & Sample == "Plaque") %>%
+  subset_taxa(Class != "UNCLASSIFIED") %>%
+  transform_sample_counts(function(x) x/sum(x) * 1) %>%
+  phyloseq_diff_abundance(ps_tmp = .,
+                          approach = "maaslin3",
+                          formula = "~ Inflammation_response",
+                          glom = "Species",
+                          taxa_rank = "Species",
+                          masslin3_output_dir = "/Volumes/lnp524/PhD/Puplications/Inflammation_trajectories/04_DA/maaslin3/pway_plaque/week2_ref_moderate",
+                          maaslin3_random_effects = NULL, 
+                          maaslin3_reference = "Inflammation_response,Moderate", 
+                          maaslin3_lefse_plot = FALSE,
+                          pvalue_cutoff = 0.05
+                          ) -> p 
+```
+
+```{r HUMAnN plaque week 2}
+# formula = "~ delta_mean_bleeding"
+pw_mia %>%
+  subset_samples(Period == "Week 2" & Sample == "Plaque") %>%
+  subset_taxa(Class != "UNCLASSIFIED") %>%
+  transform_sample_counts(function(x) x/sum(x) * 1) %>%
+  phyloseq_diff_abundance(ps_tmp = .,
+                          approach = "maaslin3",
+                          formula = "~ delta_mean_bleeding",
+                          glom = "Species",
+                          taxa_rank = "Species",
+                          masslin3_output_dir = "/Volumes/lnp524/PhD/Puplications/Inflammation_trajectories/04_DA/maaslin3/pway_plaque/week2_delta",
+                          maaslin3_random_effects = NULL, 
+                          maaslin3_reference = NULL, 
+                          maaslin3_lefse_plot = FALSE,
+                          pvalue_cutoff = 0.05
+                          ) -> p
+```
+
+```{r HUMAnN plaque week 4}
+# formula = "~ Inflammation_response"
+# reference = slow
+pw_mia %>%
+  subset_samples(Period == "Week 4" & Sample == "Plaque") %>%
+  subset_taxa(Class != "UNCLASSIFIED") %>%
+  transform_sample_counts(function(x) x/sum(x) * 1) %>%
+  phyloseq_diff_abundance(ps_tmp = .,
+                          approach = "maaslin3",
+                          formula = "~ Inflammation_response",
+                          glom = "Species",
+                          taxa_rank = "Species",
+                          masslin3_output_dir = "/Volumes/lnp524/PhD/Puplications/Inflammation_trajectories/04_DA/maaslin3/pway_plaque/week4_ref_slow",
+                          maaslin3_random_effects = NULL, 
+                          maaslin3_reference = "Inflammation_response,Slow", 
+                          maaslin3_lefse_plot = FALSE,
+                          pvalue_cutoff = 0.05
+                          ) -> p 
+```
+
+```{r HUMAnN plaque week 4}
+# formula = "~ Inflammation_response"
+# reference = moderate
+pw_mia %>%
+  subset_samples(Period == "Week 4" & Sample == "Plaque") %>%
+  subset_taxa(Class != "UNCLASSIFIED") %>%
+  transform_sample_counts(function(x) x/sum(x) * 1) %>%
+  phyloseq_diff_abundance(ps_tmp = .,
+                          approach = "maaslin3",
+                          formula = "~ Inflammation_response",
+                          glom = "Species",
+                          taxa_rank = "Species",
+                          masslin3_output_dir = "/Volumes/lnp524/PhD/Puplications/Inflammation_trajectories/04_DA/maaslin3/pway_plaque/week4_ref_moderate",
+                          maaslin3_random_effects = NULL, 
+                          maaslin3_reference = "Inflammation_response,Moderate", 
+                          maaslin3_lefse_plot = FALSE,
+                          pvalue_cutoff = 0.05
+                          ) -> p 
+```
+
+```{r session info}
+sessionInfo()
+```
