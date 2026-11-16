@@ -1,0 +1,313 @@
+---
+title: "Taxonomic contribution"
+subtitle: "ARTICLE TITLE"
+author: "Caroline Schou Nielsen"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+output: 
+  html_document: 
+    toc: yes
+    keep_md: no
+---
+
+```{r setup}
+rm(list = ls())
+gc()
+# invisible(lapply(paste0('package:', names(sessionInfo()$otherPkgs)), detach, character.only=TRUE, unload=TRUE))
+# options(java.parameters = "-Xmx80000m")
+```
+
+```{r setup2}
+knitr::opts_chunk$set(warning = FALSE)
+knitr::opts_chunk$set(message = FALSE)
+##knitr::opts_chunk$set(cache=TRUE)
+##knitr::opts_chunk$set(echo = TRUE)
+##knitr::opts_chunk$set(dev = "ragg_png") # https://ragg.r-lib.org/index.html
+##knitr::opts_chunk$set(fig.width = 6) #https://r4ds.had.co.nz/graphics-for-communication.html#figure-sizing
+knitr::opts_chunk$set(fig.asp = 0.618)
+knitr::opts_chunk$set(fig.show = "hold")
+knitr::opts_chunk$set(fig.show = "70%")
+knitr::opts_chunk$set(fig.align = "center")
+```
+
+```{r setup3}
+library(phyloseq)
+library(tidyverse)
+library(ggnewscale)
+library(readr)
+library(speedyseq)
+library(microViz)
+library(GUniFrac)
+#library(ampvis2)
+library(ggpubr)
+library(gginnards)
+library(scales)
+library(reshape2)
+library(ape)
+library(GGally)
+library(rstatix)
+library(ggplot2)
+library(dplyr)
+library(tibble)
+library(tidyr)
+library(viridis)
+library(patchwork)
+library(ggh4x)
+library(stringr)
+library(forcats)
+library(patchwork)
+library(grid)
+library(gtable)
+```
+
+```{r MetaPhlAn}
+# Load phyloseq MetaPhlAn object
+# Not included in GitHub repo due to size
+# See README for data access information
+
+load(here::here("/Volumes/lnp524/PhD/Puplications/Inflammation_trajectories/01_metaphlan_and_humann_import/01_data_infl.Rdata"))
+
+# Quick control that data is right
+ps_up %>% 
+  sample_data() %>% 
+  data.frame() %>% 
+  DT::datatable()
+```
+
+```{r HUMAnN}
+# Load phyloseq HUMAnN object
+# Not included in GitHub repo due to size
+# See README for data access information
+
+load(here::here("/Volumes/lnp524/PhD/Puplications/Inflammation_trajectories/01_metaphlan_and_humann_import/01_humann_data_infl.Rdata"))
+
+# Quick control that data is right
+pw_mia_strat %>% 
+  sample_data() %>% 
+  data.frame() %>% 
+  DT::datatable()
+```
+
+# Identifying pathway names
+```{r find the exact pathway names}
+tax_df <- as.data.frame(tax_table(pw_mia_strat))
+unique(tax_df$pathway_name) %>%
+    grep("lysine", ., value = TRUE)
+```
+
+## All pathways in saliva at week 4, genus level contribution
+```{r extract rows beloning to pathway}
+tax_phylo <- pw_mia_strat %>% 
+  subset_samples(Sample == "Saliva" & Period == "Week 4") %>% 
+  subset_taxa(pathway_name %in% c("pyrimidine deoxyriboNucleot. de novo Bios. IV", 
+                                  "GDP-mannose Bios.", 
+                                  "SPWY. of UDP-glucose-derived O-antigen building blocks Bios.", 
+                                  "pyruvate Ferm. to acetate and lactate II", 
+                                  "pyruvate Ferm. to acetate and (S)-lactate I", 
+                                  "5-aminoimidazole ribonucleotide Bios. II", 
+                                  "SPWY. of 5-aminoimidazole ribonucleotide Bios.", 
+                                  "5-aminoimidazole ribonucleotide Bios. I", 
+                                  "S-adenosyl-L-methionine salvage I", 
+                                  "inosine-5'-phosphate Bios. III", 
+                                  "adenine and adenosine salvage III", 
+                                  "guanosine riboNucleot. de novo Bios.", 
+                                  "inosine-5'-phosphate Bios. II", 
+                                  "folate transf. II (plants)", 
+                                  "O-antigen building blocks Bios. (E. coli)", 
+                                  "glycogen Degrad. II", 
+                                  "SPWY. of purine Nucleot. de novo Bios. I", 
+                                  "UMP Bios. III", 
+                                  "UMP Bios. II", 
+                                  "UMP Bios. I", 
+                                  "chorismate Bios. from 3-dehydroquinate", 
+                                  "UDP-N-acetylmuramoyl-pentapeptide Bios. I (meso-diaminopimelate containing)", 
+                                  "chorismate Bios. I",
+                                  "peptidoglycan Bios. I (meso-diaminopimelate containing)", 
+                                  "L-lysine Ferm. to acetate and butanoate")) 
+
+# Extract taxonomy
+tax <- as.data.frame(tax_table(tax_phylo))
+tax$Genus[is.na(tax$Genus) | tax$Genus %in% c("", "NA", "unclassified", "Unclassified", "g__")] <- "Unclassified"
+tax$feature <- rownames(tax)
+
+# Extract OTU
+otu <- as.data.frame(otu_table(tax_phylo)) 
+otu$feature <- rownames(otu)
+
+df <- left_join(otu, tax, by = "feature")
+
+otu_genus <- df %>%
+  mutate(Genus = ifelse(is.na(Genus) | Genus == "", "Unclassified", Genus)) %>%
+  group_by(pathway_id, pathway_name, Genus, Superclass2) %>%
+  summarise(across(where(is.numeric), sum), .groups = "drop")
+
+# Extract metadata
+meta <- as.data.frame(sample_data(tax_phylo))
+
+meta <- structure(meta, class = "data.frame", row.names = rownames(meta))
+
+meta$SampleID <- rownames(meta)
+```
+
+```{r calculate species richness per sample}
+richness_long <- df %>%
+  pivot_longer(cols = starts_with("S_"), names_to = "SampleID", values_to = "Abundance") %>%
+  left_join(meta, by = "SampleID") %>%
+  filter(Abundance > 0) %>%   # only species that are present
+  group_by(pathway_name, Superclass2, Period, Genus, Sample, Inflammation_response) %>%
+  summarise(n_species = n_distinct(Species),.groups = "drop")
+
+richness_long <- richness_long %>%
+  mutate(Group = if_else(Genus == "Unclassified", "Unclassified","Classified"))
+
+richness_legend_levels <- c(setdiff(levels(richness_long$Genus), "Unclassified"), "Unclassified")
+
+richness_long <- richness_long %>%
+  mutate(Genera = factor(Genus, levels = richness_legend_levels))
+```
+
+```{r}
+richness_df <- richness_long %>%
+  filter(Group == "Classified") %>%
+  distinct(pathway_name, Superclass2, Sample, Period, Genus, n_species, Inflammation_response) %>% 
+  mutate(Superclass2 = stringr::str_wrap(Superclass2, width = 15))
+```
+
+```{r calculate genus level contribution}
+otu_long <- otu_genus %>%
+  pivot_longer(cols = starts_with("S_"), names_to = "SampleID", values_to = "Abundance") %>%
+  left_join(meta, by = "SampleID") %>%
+  mutate(Genus = trimws(Genus), Genus = ifelse(is.na(Genus) | Genus == "", "Unclassified", Genus), Genus = factor(Genus)) %>%
+  group_by(pathway_name, Sample, Period, Genus, Superclass2, Inflammation_response) %>%
+  summarise(Abundance = mean(Abundance, na.rm = TRUE), .groups = "drop")
+
+otu_long <- otu_long %>%
+  mutate(Group = if_else(Genus == "Unclassified", "Unclassified","Classified"))
+
+legend_levels <- c(setdiff(levels(otu_long$Genus), "Unclassified"), "Unclassified")
+
+otu_long <- otu_long %>%
+  mutate(Genera = factor(Genus, levels = legend_levels)) %>% 
+  mutate(Superclass2 = stringr::str_wrap(Superclass2, width = 15))
+```
+
+```{r create color palette}
+all_genus <- unique(as.character(otu_long$Genus))
+
+other <- setdiff(all_genus, "Unclassified")
+
+fill_colors <- c("Unclassified" = "#DF8F4499", setNames(viridis::viridis(length(setdiff(unique(otu_long$Genus), "Unclassified")), option = "turbo"), setdiff(unique(otu_long$Genus), "Unclassified")))
+```
+
+```{r same ordering in both plots}
+# Use the current species richness ordering as the reference
+superclass_levels <- richness_df %>%
+  distinct(Superclass2) %>%
+  arrange(Superclass2) %>%
+  pull(Superclass2)
+
+# Apply the same wrapping and superclass ordering to otu_long
+otu_long <- otu_long %>%
+  mutate(Superclass2 = str_wrap(as.character(Superclass2), width = 15),
+         Superclass2 = factor(Superclass2, levels = superclass_levels))
+
+# Make sure richness_df uses the same factor levels
+richness_df <- richness_df %>%
+  mutate(Superclass2 = factor(Superclass2, levels = superclass_levels))
+```
+
+```{r plot species richness}
+richness_p <- ggplot(richness_df, aes(x = n_species, y = Inflammation_response)) +
+  geom_boxplot(width = 0.6) + 
+  facet_nested(Superclass2 + pathway_name ~ ., scales = "free_y", space = "free_y", switch = "y", 
+               strip = ggh4x::strip_nested(text_y = ggh4x::elem_list_text(angle = c(0, 0), size = c(7, 8)), by_layer_y = TRUE)) +
+  labs(x = "Species richness", y = NULL) +
+  theme_bw() + 
+  theme(strip.placement = "outside", strip.switch.pad.grid = unit(0, "mm"),
+        axis.text.y = element_text(size = 6))
+
+richness_p
+```
+
+```{r}
+richness_grob <- ggplotGrob(richness_p)
+
+strip_ids <- grep("^strip-l-", richness_grob$layout$name)
+
+superclass_width <- unit(35, "mm")
+
+# Preserve the existing pathway strip width
+pathway_width <- richness_grob$grobs[[strip_ids[1]]]$widths[2]
+
+for (i in strip_ids) {
+  strip_grob <- richness_grob$grobs[[i]]
+
+  strip_grob$widths[1] <- superclass_width
+  strip_grob$widths[2] <- pathway_width
+
+  richness_grob$grobs[[i]] <- strip_grob
+}
+
+# Update the total width of the nested strip column
+strip_col <- richness_grob$layout$l[strip_ids[1]]
+
+richness_grob$widths[strip_col] <- superclass_width + pathway_width
+
+grid.newpage()
+grid.draw(richness_grob)
+```
+
+```{r}
+ggsave("/Volumes/lnp524/PhD/Puplications/Inflammation_trajectories/07_tax_contribution/species_richness_week4_saliva_p.png", plot = richness_grob, dpi = 500, units = "cm", width = 36, height = 46)
+```
+
+```{r plot genus contribution}
+week4_saliva <- ggplot(otu_long,
+  aes(x = Abundance, y = Inflammation_response, fill = Genera)) +
+  geom_col(colour = "white", linewidth = 0.1) +
+  facet_nested(Superclass2 + pathway_name ~ Group, scales = "free_y", space = "free_y", switch = "y", 
+               strip = ggh4x::strip_nested(text_y = ggh4x::elem_list_text(angle = c(0, 0), size = c(7, 8)), by_layer_y = TRUE)) + 
+  scale_fill_manual(values = fill_colors, drop = FALSE) + 
+  labs(x = "Average genus contribution to pathway", y = NULL, fill = NULL) +
+  theme_bw() +
+  theme(strip.placement = "outside", strip.switch.pad.grid = unit(0, "mm"),
+        axis.text.y = element_text(size = 6), legend.position = "bottom", 
+        legend.justification = "center", legend.box.just = "center",
+        legend.location = "plot",
+        legend.text = element_text(size = 7), legend.key.height = unit(3, "mm")) + 
+  guides(fill = guide_legend(reverse = FALSE, ncol = 6, byrow = FALSE))
+
+week4_saliva
+```
+
+```{r}
+week4_grob <- ggplotGrob(week4_saliva)
+
+strip_ids <- grep("^strip-l-", week4_grob$layout$name)
+
+superclass_width <- unit(35, "mm")
+pathway_width <- unit(10, "cm")
+
+for (i in strip_ids) {
+  strip_grob <- week4_grob$grobs[[i]]
+
+  strip_grob$widths[1] <- superclass_width
+  strip_grob$widths[2] <- pathway_width
+
+  week4_grob$grobs[[i]] <- strip_grob
+}
+
+strip_col <- week4_grob$layout$l[strip_ids[1]]
+
+week4_grob$widths[strip_col] <- superclass_width + pathway_width
+
+grid.newpage()
+grid.draw(week4_grob)
+```
+
+```{r}
+ggsave("/Volumes/lnp524/PhD/Puplications/Inflammation_trajectories/07_tax_contribution/genus_contribution_week4_saliva_p.png", plot = week4_grob, dpi = 500, units = "cm", width = 36, height = 50)
+```
+
+```{r}
+sessionInfo()
+```
