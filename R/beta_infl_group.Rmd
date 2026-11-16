@@ -1,0 +1,2035 @@
+---
+title: "Grouping based on community similarity"
+subtitle: "ARTICLE TITLE"
+author: "Caroline Schou Nielsen"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+output: 
+  html_document: 
+    toc: yes
+    keep_md: no
+---
+
+```{r setup}
+rm(list = ls())
+gc()
+# invisible(lapply(paste0('package:', names(sessionInfo()$otherPkgs)), detach, character.only=TRUE, unload=TRUE))
+# options(java.parameters = "-Xmx80000m")
+```
+
+```{r setup2}
+knitr::opts_chunk$set(warning = FALSE)
+knitr::opts_chunk$set(message = FALSE)
+##knitr::opts_chunk$set(cache=TRUE)
+##knitr::opts_chunk$set(echo = TRUE)
+##knitr::opts_chunk$set(dev = "ragg_png") # https://ragg.r-lib.org/index.html
+##knitr::opts_chunk$set(fig.width = 6) #https://r4ds.had.co.nz/graphics-for-communication.html#figure-sizing
+knitr::opts_chunk$set(fig.asp = 0.618)
+knitr::opts_chunk$set(fig.show = "hold")
+knitr::opts_chunk$set(fig.show = "70%")
+knitr::opts_chunk$set(fig.align = "center")
+```
+
+```{r setup3, warning=FALSE}
+library(tidyverse)
+library(readxl)
+library(readr)
+library(speedyseq)
+library(microViz)
+library(vegan)
+library(mia)
+library(ape)
+library(GUniFrac)
+library(ggplot2)
+library(cluster)
+library(ggpubr)
+library(cowplot)
+library(clustertend)
+```
+
+```{r setup4, warning=FALSE}
+# Import functions
+'%!in%' <- function(x,y)!('%in%'(x,y))
+
+source_dir = "https://raw.githubusercontent.com/fconstancias/DivComAnalyses/master/R/"
+
+source(paste0(source_dir,"phyloseq_varia.R"))
+source(paste0(source_dir,"phyloseq_beta.R"))
+source(paste0(source_dir,"phyloseq_normalisation.R"))
+```
+
+```{r setup5}
+# Beta diversity parameters
+source("https://raw.githubusercontent.com/fconstancias/KU_Caroline/refs/heads/main/code/functions/phyloseq_functions.R")
+
+# compute_plot_beta() 
+# details:
+
+#' @title This function calculates beta diversity, generates ordination plots (e.g., PCoA),  performs PERMANOVA, and optionally creates boxplots of distances between metadata groups.
+#' @author Florentin Constancias
+#' @param ps_up A phyloseq object containing microbiome data.
+#' @param beta A list of distance matrices for beta diversity (e.g., Bray-Curtis, Aitchison).
+#' @param m Character string specifying the ordination method (default: "PCoA").
+#' @param color_group Character string for the variable used to color points in ordination plots (default: "Time").
+#' @param shape_group Character string for the variable used to shape points in ordination plots (default: "Sample").
+#' @param alpha Optional variable for transparency adjustment in ordination plots (default: NULL).
+#' @param col_pal Color palette for point colors (default: `time_pal`).
+#' @param fill_pal Fill color palette for point fills (default: `time_pal`).
+#' @param path_group Character string for the variable grouping paths in ordination plots (default: "interaction(Sample,Subject)").
+#' @param facet_formula Formula for faceting ordination plots (default: "Sample ~ .").
+#' @param axis1 Integer specifying the ordination axis to plot on the x-axis (default: 1).
+#' @param axis2 Integer specifying the ordination axis to plot on the y-axis (default: 2).
+#' @param seed Integer for random seed, ensuring reproducible results in ordination (default: 123).
+#' @param permanova_terms Character vector of variables for PERMANOVA tests (default: c("Time", "cluster_Dtp2")).
+#' @param metadata_dist_boxplot Optional variable for generating distance boxplots (default: NULL).
+#' @param strata Variable for stratified PERMANOVA testing (default: "none").
+#' @param perm Number of permutations for PERMANOVA (default: 999).
+#' 
+#' @return A list of results, including:
+#'   - `pcoas`: Ordination plots with faceting and custom color/shape groups.
+#'   - `expl_var`: Explained variance for each axis in ordination plots.
+#'   - `PCOA`: Detailed ordination plot for the rAitchison distance with paths.
+#'   - `PCOA_leg`: Legend for the ordination plot.
+#'   - `perm`: PERMANOVA results.
+#'   - `pw_perm`: Pairwise PERMANOVA results for each variable in `permanova_terms`.
+#'   - `tw_perm`: Two-way PERMANOVA results for each variable in `permanova_terms`.
+#'   - Optional: `dist_boxplot` if `metadata_dist_boxplot` is provided, showing boxplots of distances.
+```
+
+```{r MetaPhlAn}
+# Load phyloseq MetaPhlAn object
+# Not included in GitHub repo due to size
+# See README for data access information
+
+load(here::here("/Volumes/lnp524/PhD/Puplications/Inflammation_trajectories/01_metaphlan_and_humann_import/01_data_infl.Rdata"))
+
+# Quick control that data is right
+ps_up %>% 
+  sample_data() %>% 
+  data.frame() %>% 
+  DT::datatable()
+```
+
+```{r HUMAnN}
+# Load phyloseq HUMAnN object
+# Not included in GitHub repo due to size
+# See README for data access information
+
+load(here::here("/Volumes/lnp524/PhD/Puplications/Inflammation_trajectories/01_metaphlan_and_humann_import/01_humann_data_infl.Rdata"))
+
+# Quick control that data is right
+pw_mia %>% 
+  sample_data() %>% 
+  data.frame() %>% 
+  DT::datatable()
+```
+
+```{r plot_positions}
+# Global ggplot position settings (used across figures)
+pd <- position_dodge(0.3)
+```
+
+```{r standard theme}
+# Set standard theme
+theme(legend.position = "bottom", 
+      plot.margin = margin(0.2, 0.2, 0.2, 0.2, "cm"),
+      legend.box.margin = margin(0.2, 0.2, 0.2, 0.2, "cm"),
+      legend.spacing = unit(0.3, "cm")) -> standard_theme
+```
+
+```{r cluster colors}
+cluster_colors <- c(
+  "1" = "#B24745FF",
+  "2" = "#80796BFF",
+  "3" = "#6A6599FF"
+)
+ # "1" = "#CC79A7",
+ #  "2" = "#7F7F7F",
+ #  "3" = "#8C564B"
+```
+
+# Calculate MetaPhlAn beta diversity distances
+```{r MetaPhlAn data transformation}
+# MetaPhlAn data transformation for beta diversity analysis
+# Calculates bjaccard, wjaccard and rAitchison beta diversity measures
+beta <- ps_up %>%
+  subset_taxa(Class != "UNCLASSIFIED") %>% 
+  transform_sample_counts(function(x) x/sum(x) * 1) %>% 
+  phyloseq_compute_bdiv()
+```
+
+## MetaPhlAn, saliva, baseline
+```{r distances taxa SALIVA BASELINE, warning=FALSE}
+# Subset phyloseq object
+ps_tmp <- ps_up %>%
+        subset_samples(Sample == "Saliva" & Period == "Baseline") %>%
+        subset_taxa(Class != "UNCLASSIFIED") %>% 
+        transform_sample_counts(function(x) x/sum(x) * 1)
+
+# Extract OTU table
+otu_mat <- as(otu_table(ps_tmp), "matrix") %>% t()
+# Assign sample names explicitly
+rownames(otu_mat) <- sample_names(ps_tmp)
+
+# Robust CLR transformation
+clr_mat <- vegan::decostand(otu_mat, "rclr") 
+# Assign sample names explicitly
+rownames(clr_mat) <- sample_names(ps_tmp)
+
+# Assign Robust Aitchison distance to beta variable
+beta$rAitchison <- vegan::vegdist(clr_mat, method = "euclidean") %>% 
+  magrittr::divide_by(100)
+
+# Remove Bray-Curtis and Sørensen beta
+beta$bray <- NULL 
+beta$sorensen <- NULL 
+
+hopkins(clr_mat, n = nrow(clr_mat)-1)
+
+# Interpretation of the Hopkins statistic is:
+# 
+# ~0.5 → random structure / no meaningful clusters
+# close to 0 → highly uniform/regular spacing
+# close to 1 → strong cluster tendency
+```
+
+## Optimal number of clusters
+```{r optimal clusters}
+# Elbow method on CLR data
+set.seed(123)
+
+wss <- numeric(10)
+
+for (k in 1:10) {
+  km <- kmeans(clr_mat, centers = k, nstart = 25)
+  wss[k] <- km$tot.withinss
+}
+
+plot(1:10, wss, type = "b", pch = 19,
+     xlab = "Number of clusters (k)",
+     ylab = "Total within-cluster sum of squares")
+
+# Silhouette method on Robust Aithison distances
+sil_width <- numeric(10)
+
+for (k in 2:10) {
+  groups <- cutree(hclust(beta$rAitchison, method = "average"), k = k)
+  sil <- silhouette(groups, beta$rAitchison)
+  sil_width[k] <- mean(sil[, 3])
+}
+
+plot(2:10, sil_width[2:10], type = "b", pch = 19,
+     xlab = "Number of clusters (k)",
+     ylab = "Average silhouette width")
+```
+For these samples, the optimal number of clusters are 3. 
+
+## Cut groups into optimal number of clusters
+```{r}
+# Perform hierarchical clustering
+clust <- hclust(beta$rAitchison, method = "average")
+
+# Plot dendrogram
+#plot(clust)
+
+# Cut dendrogram into optimal number of clusters
+groups <- cutree(clust, k = 3)
+
+groups
+```
+
+```{r add cluster to temporary phyloseq object}
+sample_data(ps_tmp)$Cluster <- factor(groups[sample_names(ps_tmp)])
+```
+
+```{r visualize taxa, warning=FALSE}
+ord <- ordinate(ps_tmp, method = "PCoA", distance = beta$rAitchison)
+
+p_clust_tax_saliva_baseline <- plot_ordination(ps_tmp, ord, color = "Cluster", shape = "Inflammation_response") +
+  geom_point(size = 3) +
+  scale_color_manual(values = cluster_colors) +
+  labs(shape = "Responder groups", color = "Microbiota cluster") +
+  theme_light() + theme_linedraw() +    
+  theme(legend.position = "none")
+
+p_clust_tax_saliva_baseline
+```
+```{r}
+p_clust_tax_saliva_baseline <- p_clust_tax_saliva_baseline + labs(title = "", x = "Axis 1 [52%]", y = "Axis 2 [44.2%]")
+
+p_clust_tax_saliva_baseline
+```
+
+```{r bar plot}
+# Convert sample_data to a data frame
+metadata <- data.frame(sample_data(ps_tmp))
+
+# Make sure variables are factors
+metadata$Cluster <- factor(metadata$Cluster)
+metadata$Inflammation_response <- factor(metadata$Inflammation_response)
+
+# Summarise counts and proportions
+df_plot <- metadata %>%
+  group_by(Cluster, Inflammation_response) %>%
+  summarise(n = n(), .groups = "drop") %>%
+  group_by(Cluster) %>%
+  mutate(prop = n / sum(n))
+
+p_bar_tax_saliva_baseline <- ggplot(df_plot, aes(x = Cluster, y = prop, fill = Inflammation_response)) +
+  geom_bar(stat = "identity", position = "fill", color = "black", width = 0.7) +
+  geom_text(
+    aes(label = n),
+    position = position_fill(vjust = 0.5),
+    size = 4
+  ) +
+  scale_fill_manual(values = infl_pal) +
+  scale_y_continuous(labels = scales::percent_format()) +
+  labs(
+    title = "", 
+    x = "Microbiota cluster",
+    y = "Proportion of participants",
+    fill = "Responder group"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    panel.grid.major.x = element_blank(),
+    axis.text.x = element_text(face = "bold"),
+    legend.position = "none"
+  )
+
+p_bar_tax_saliva_baseline
+```
+
+```{r statistic}
+# Create contingency table
+tab <- table(metadata$Cluster, metadata$Inflammation_response)
+
+# Pearson's Chi-square test
+fisher.test(tab)
+
+# Effect size (Cramér's V)
+library(rcompanion)
+cramerV(tab)
+```
+
+## MetaPhlAn, saliva, week 2
+```{r distances taxa SALIVA WEEK 2, warning=FALSE}
+# Subset phyloseq object
+ps_tmp <- ps_up %>%
+        subset_samples(Sample == "Saliva" & Period == "Week 2") %>%
+        subset_taxa(Class != "UNCLASSIFIED") %>% 
+        transform_sample_counts(function(x) x/sum(x) * 1)
+
+# Extract OTU table
+otu_mat <- as(otu_table(ps_tmp), "matrix") %>% t()
+# Assign sample names explicitly
+rownames(otu_mat) <- sample_names(ps_tmp)
+
+# Robust CLR transformation
+clr_mat <- vegan::decostand(otu_mat, "rclr") 
+# Assign sample names explicitly
+rownames(clr_mat) <- sample_names(ps_tmp)
+
+# Assign Robust Aitchison distance to beta variable
+beta$rAitchison <- vegan::vegdist(clr_mat, method = "euclidean") %>% 
+  magrittr::divide_by(100)
+
+# Remove Bray-Curtis and Sørensen beta
+beta$bray <- NULL 
+beta$sorensen <- NULL 
+
+hopkins(clr_mat, n = nrow(clr_mat)-1)
+```
+
+## Optimal number of clusters
+```{r optimal clusters}
+# Elbow method on CLR data
+set.seed(123)
+
+wss <- numeric(10)
+
+for (k in 1:10) {
+  km <- kmeans(clr_mat, centers = k, nstart = 25)
+  wss[k] <- km$tot.withinss
+}
+
+plot(1:10, wss, type = "b", pch = 19,
+     xlab = "Number of clusters (k)",
+     ylab = "Total within-cluster sum of squares")
+
+# Silhouette method on Robust Aithison distances
+sil_width <- numeric(10)
+
+for (k in 2:10) {
+  groups <- cutree(hclust(beta$rAitchison, method = "average"), k = k)
+  sil <- silhouette(groups, beta$rAitchison)
+  sil_width[k] <- mean(sil[, 3])
+}
+
+plot(2:10, sil_width[2:10], type = "b", pch = 19,
+     xlab = "Number of clusters (k)",
+     ylab = "Average silhouette width")
+```
+
+For these samples, the optimal number of clusters 3. 
+
+## Cut groups into optimal number of clusters
+```{r}
+# Perform hierarchical clustering 
+clust <- hclust(beta$rAitchison, method = "average") 
+
+# Plot dendrogram 
+#plot(clust)
+
+# Cut dendrogram into optimal number of clusters
+groups <- cutree(clust, k = 3) 
+
+groups
+```
+
+```{r add cluster to temporary phyloseq object}
+sample_data(ps_tmp)$Cluster <- factor(     groups[sample_names(ps_tmp)])
+```
+
+```{r visualize taxa, warning=FALSE}
+ord <- ordinate(ps_tmp, method = "PCoA", distance = beta$rAitchison)
+
+p_clust_tax_saliva_week2 <- plot_ordination(ps_tmp, ord, color = "Cluster", shape = "Inflammation_response") +
+  geom_point(size = 3) +
+  scale_color_manual(values = cluster_colors) +
+  labs(shape = "Responder groups", color = "Microbiota cluster") +
+  theme_light() + theme_linedraw() +    
+  theme(legend.position = "none") 
+
+p_clust_tax_saliva_week2
+```
+
+```{r}
+p_clust_tax_saliva_week2 <- p_clust_tax_saliva_week2 +  labs(title = "", 
+                                                                   x = "Axis 1 [50.2%]", y = "Axis 2 [40.9%]")
+
+p_clust_tax_saliva_week2
+```
+
+```{r bar plot}
+# Convert sample_data to a data frame
+metadata <- data.frame(sample_data(ps_tmp))
+
+# Make sure variables are factors
+metadata$Cluster <- factor(metadata$Cluster)
+metadata$Inflammation_response <- factor(metadata$Inflammation_response)
+
+# Summarise counts and proportions
+df_plot <- metadata %>%
+  group_by(Cluster, Inflammation_response) %>%
+  summarise(n = n(), .groups = "drop") %>%
+  group_by(Cluster) %>%
+  mutate(prop = n / sum(n))
+
+p_bar_tax_saliva_week2 <- ggplot(df_plot, aes(x = Cluster, y = prop, fill = Inflammation_response)) +
+  geom_bar(stat = "identity", position = "fill", color = "black", width = 0.7) +
+  geom_text(
+    aes(label = n),
+    position = position_fill(vjust = 0.5),
+    size = 4
+  ) +
+  scale_fill_manual(values = infl_pal) +
+  scale_y_continuous(labels = scales::percent_format()) +
+  labs(
+    title = "", 
+    x = "Microbiota cluster",
+    y = "Proportion of participants",
+    fill = "Responder group"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    panel.grid.major.x = element_blank(),
+    axis.text.x = element_text(face = "bold"),
+    legend.position = "none"
+  )
+
+p_bar_tax_saliva_week2
+```
+
+```{r statistic}
+# Create contingency table
+tab <- table(metadata$Cluster, metadata$Inflammation_response)
+
+# Pearson's Chi-square test
+fisher.test(tab)
+
+# Effect size (Cramér's V)
+library(rcompanion)
+cramerV(tab)
+```
+
+## MetaPhlAn, saliva, week 4
+```{r distances taxa SALIVA WEEK 4, warning=FALSE}
+# Subset phyloseq object
+ps_tmp <- ps_up %>%
+        subset_samples(Sample == "Saliva" & Period == "Week 4") %>%
+        subset_taxa(Class != "UNCLASSIFIED") %>% 
+        transform_sample_counts(function(x) x/sum(x) * 1)
+
+# Extract OTU table
+otu_mat <- as(otu_table(ps_tmp), "matrix") %>% t()
+# Assign sample names explicitly
+rownames(otu_mat) <- sample_names(ps_tmp)
+
+# Robust CLR transformation
+clr_mat <- vegan::decostand(otu_mat, "rclr") 
+# Assign sample names explicitly
+rownames(clr_mat) <- sample_names(ps_tmp)
+
+# Assign Robust Aitchison distance to beta variable
+beta$rAitchison <- vegan::vegdist(clr_mat, method = "euclidean") %>% 
+  magrittr::divide_by(100)
+
+# Remove Bray-Curtis and Sørensen beta
+beta$bray <- NULL 
+beta$sorensen <- NULL 
+
+hopkins(clr_mat, n = nrow(clr_mat)-1)
+```
+
+## Optimal number of clusters
+```{r optimal clusters}
+# Elbow method on CLR data
+set.seed(123)
+
+wss <- numeric(10)
+
+for (k in 1:10) {
+  km <- kmeans(clr_mat, centers = k, nstart = 25)
+  wss[k] <- km$tot.withinss
+}
+
+plot(1:10, wss, type = "b", pch = 19,
+     xlab = "Number of clusters (k)",
+     ylab = "Total within-cluster sum of squares")
+
+# Silhouette method on Robust Aithison distances
+sil_width <- numeric(10)
+
+for (k in 2:10) {
+  groups <- cutree(hclust(beta$rAitchison, method = "average"), k = k)
+  sil <- silhouette(groups, beta$rAitchison)
+  sil_width[k] <- mean(sil[, 3])
+}
+
+plot(2:10, sil_width[2:10], type = "b", pch = 19,
+     xlab = "Number of clusters (k)",
+     ylab = "Average silhouette width")
+```
+
+For these samples, the optimal number of clusters is 3 
+
+## Cut groups into optimal number of clusters
+```{r}
+# Perform hierarchical clustering 
+clust <- hclust(beta$rAitchison, method = "average") 
+
+# Plot dendrogram 
+#plot(clust)
+
+# Cut dendrogram into optimal number of clusters
+groups <- cutree(clust, k = 3) 
+
+groups
+```
+
+```{r add cluster to temporary phyloseq object}
+sample_data(ps_tmp)$Cluster <- factor(groups[sample_names(ps_tmp)])
+```
+
+```{r visualize taxa, warning=FALSE}
+ord <- ordinate(ps_tmp, method = "PCoA", distance = beta$rAitchison)
+
+p_clust_tax_saliva_week4 <- plot_ordination(ps_tmp, ord, color = "Cluster", shape = "Inflammation_response") +
+  geom_point(size = 3) +
+  scale_color_manual(values = cluster_colors) +
+  labs(shape = "Responder groups", color = "Microbiota cluster") +
+  theme_light() + theme_linedraw() +    
+  theme(legend.position = "none")
+
+p_clust_tax_saliva_week4
+```
+
+```{r}
+p_clust_tax_saliva_week4 <- p_clust_tax_saliva_week4 +  labs(title = "", 
+                                                                   x = "Axis 1 [46.8%]", y = "Axis 2 [44.2%]")
+
+p_clust_tax_saliva_week4
+```
+
+```{r bar plot}
+# Convert sample_data to a data frame
+metadata <- data.frame(sample_data(ps_tmp))
+
+# Make sure variables are factors
+metadata$Cluster <- factor(metadata$Cluster)
+metadata$Inflammation_response <- factor(metadata$Inflammation_response)
+
+# Summarise counts and proportions
+df_plot <- metadata %>%
+  group_by(Cluster, Inflammation_response) %>%
+  summarise(n = n(), .groups = "drop") %>%
+  group_by(Cluster) %>%
+  mutate(prop = n / sum(n))
+
+p_bar_tax_saliva_week4 <- ggplot(df_plot, aes(x = Cluster, y = prop, fill = Inflammation_response)) +
+  geom_bar(stat = "identity", position = "fill", color = "black", width = 0.7) +
+  geom_text(
+    aes(label = n),
+    position = position_fill(vjust = 0.5),
+    size = 4
+  ) +
+  scale_fill_manual(values = infl_pal) +
+  scale_y_continuous(labels = scales::percent_format()) +
+  labs(
+    title = "", 
+    x = "Microbiota cluster",
+    y = "Proportion of participants",
+    fill = "Responder group"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    panel.grid.major.x = element_blank(),
+    axis.text.x = element_text(face = "bold"),
+    legend.position = "none"
+  )
+
+p_bar_tax_saliva_week4
+```
+```{r statistic}
+# Create contingency table
+tab <- table(metadata$Cluster, metadata$Inflammation_response)
+
+# Pearson's Chi-square test
+fisher.test(tab)
+
+# Effect size (Cramér's V)
+library(rcompanion)
+cramerV(tab)
+```
+
+## MetaPhlAn, plaque, baseline
+```{r distances taxa PLAQUE BASELINE, warning=FALSE}
+# Subset phyloseq object
+ps_tmp <- ps_up %>%
+        subset_samples(Sample == "Plaque" & Period == "Baseline") %>%
+        subset_taxa(Class != "UNCLASSIFIED") %>% 
+        transform_sample_counts(function(x) x/sum(x) * 1)
+
+# Extract OTU table
+otu_mat <- as(otu_table(ps_tmp), "matrix") %>% t()
+# Assign sample names explicitly
+rownames(otu_mat) <- sample_names(ps_tmp)
+
+# Robust CLR transformation
+clr_mat <- vegan::decostand(otu_mat, "rclr") 
+# Assign sample names explicitly
+rownames(clr_mat) <- sample_names(ps_tmp)
+
+# Assign Robust Aitchison distance to beta variable
+beta$rAitchison <- vegan::vegdist(clr_mat, method = "euclidean") %>% 
+  magrittr::divide_by(100)
+
+# Remove Bray-Curtis and Sørensen beta
+beta$bray <- NULL 
+beta$sorensen <- NULL 
+
+hopkins(clr_mat, n = nrow(clr_mat)-1)
+```
+
+## Optimal number of clusters
+```{r optimal clusters}
+# Elbow method on CLR data
+set.seed(123)
+
+wss <- numeric(10)
+
+for (k in 1:10) {
+  km <- kmeans(clr_mat, centers = k, nstart = 25)
+  wss[k] <- km$tot.withinss
+}
+
+plot(1:10, wss, type = "b", pch = 19,
+     xlab = "Number of clusters (k)",
+     ylab = "Total within-cluster sum of squares")
+
+# Silhouette method on Robust Aithison distances
+sil_width <- numeric(10)
+
+for (k in 2:10) {
+  groups <- cutree(hclust(beta$rAitchison, method = "average"), k = k)
+  sil <- silhouette(groups, beta$rAitchison)
+  sil_width[k] <- mean(sil[, 3])
+}
+
+plot(2:10, sil_width[2:10], type = "b", pch = 19,
+     xlab = "Number of clusters (k)",
+     ylab = "Average silhouette width")
+```
+
+For these samples, the optimal number of clusters is 2. 
+
+## Cut groups into optimal number of clusters
+```{r}
+# Perform hierarchical clustering 
+clust <- hclust(beta$rAitchison, method = "average") 
+
+# Plot dendrogram 
+#plot(clust)
+
+# Cut dendrogram into optimal number of clusters
+groups <- cutree(clust, k = 2) 
+
+groups
+```
+
+```{r add cluster to temporary phyloseq object}
+sample_data(ps_tmp)$Cluster <- factor(groups[sample_names(ps_tmp)])
+```
+
+```{r visualize taxa, warning=FALSE}
+ord <- ordinate(ps_tmp, method = "PCoA", distance = beta$rAitchison)
+
+p_clust_tax_plaque_baseline <- plot_ordination(ps_tmp, ord, color = "Cluster", shape = "Inflammation_response") +
+  geom_point(size = 3) +
+  scale_color_manual(values = cluster_colors) +
+  labs(shape = "Responder groups", color = "Microbiota cluster") +
+  theme_light() + theme_linedraw() +    
+  theme(legend.position = "none") 
+
+p_clust_tax_plaque_baseline
+```
+
+```{r}
+p_clust_tax_plaque_baseline <- p_clust_tax_plaque_baseline +  labs(title = "", 
+                                                                   x = "Axis 1 [45.9%]", y = "Axis 2 [45%]")
+
+p_clust_tax_plaque_baseline
+```
+
+```{r bar plot}
+# Convert sample_data to a data frame
+metadata <- data.frame(sample_data(ps_tmp))
+
+# Make sure variables are factors
+metadata$Cluster <- factor(metadata$Cluster)
+metadata$Inflammation_response <- factor(metadata$Inflammation_response)
+
+# Summarise counts and proportions
+df_plot <- metadata %>%
+  group_by(Cluster, Inflammation_response) %>%
+  summarise(n = n(), .groups = "drop") %>%
+  group_by(Cluster) %>%
+  mutate(prop = n / sum(n))
+
+p_bar_tax_plaque_baseline <- ggplot(df_plot, aes(x = Cluster, y = prop, fill = Inflammation_response)) +
+  geom_bar(stat = "identity", position = "fill", color = "black", width = 0.7) +
+  geom_text(
+    aes(label = n),
+    position = position_fill(vjust = 0.5),
+    size = 4
+  ) +
+  scale_fill_manual(values = infl_pal) +
+  scale_y_continuous(labels = scales::percent_format()) +
+  labs(
+    title = "", 
+    x = "Microbiota cluster",
+    y = "Proportion of participants",
+    fill = "Responder group"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    panel.grid.major.x = element_blank(),
+    axis.text.x = element_text(face = "bold"),
+    legend.position = "none"
+  )
+
+p_bar_tax_plaque_baseline
+```
+
+```{r statistic}
+# Create contingency table
+tab <- table(metadata$Cluster, metadata$Inflammation_response)
+
+# Pearson's Chi-square test
+fisher.test(tab)
+
+# Effect size (Cramér's V)
+library(rcompanion)
+cramerV(tab)
+```
+
+## MetaPhlAn, plaque, week 2
+```{r distances taxa PLAQUE WEEK 2, warning=FALSE}
+# Subset phyloseq object
+ps_tmp <- ps_up %>%
+        subset_samples(Sample == "Plaque" & Period == "Week 2") %>%
+        subset_taxa(Class != "UNCLASSIFIED") %>% 
+        transform_sample_counts(function(x) x/sum(x) * 1)
+
+# Extract OTU table
+otu_mat <- as(otu_table(ps_tmp), "matrix") %>% t()
+# Assign sample names explicitly
+rownames(otu_mat) <- sample_names(ps_tmp)
+
+# Robust CLR transformation
+clr_mat <- vegan::decostand(otu_mat, "rclr") 
+# Assign sample names explicitly
+rownames(clr_mat) <- sample_names(ps_tmp)
+
+# Assign Robust Aitchison distance to beta variable
+beta$rAitchison <- vegan::vegdist(clr_mat, method = "euclidean") %>% 
+  magrittr::divide_by(100)
+
+# Remove Bray-Curtis and Sørensen beta
+beta$bray <- NULL 
+beta$sorensen <- NULL 
+
+hopkins(clr_mat, n = nrow(clr_mat)-1)
+```
+
+## Optimal number of clusters
+```{r optimal clusters}
+# Elbow method on CLR data
+set.seed(123)
+
+wss <- numeric(10)
+
+for (k in 1:10) {
+  km <- kmeans(clr_mat, centers = k, nstart = 25)
+  wss[k] <- km$tot.withinss
+}
+
+plot(1:10, wss, type = "b", pch = 19,
+     xlab = "Number of clusters (k)",
+     ylab = "Total within-cluster sum of squares")
+
+# Silhouette method on Robust Aithison distances
+sil_width <- numeric(10)
+
+for (k in 2:10) {
+  groups <- cutree(hclust(beta$rAitchison, method = "average"), k = k)
+  sil <- silhouette(groups, beta$rAitchison)
+  sil_width[k] <- mean(sil[, 3])
+}
+
+plot(2:10, sil_width[2:10], type = "b", pch = 19,
+     xlab = "Number of clusters (k)",
+     ylab = "Average silhouette width")
+```
+For these samples, the optimal number of clusters is 2. 
+
+## Cut groups into optimal number of clusters
+```{r}
+# Perform hierarchical clustering 
+clust <- hclust(beta$rAitchison, method = "average") 
+
+# Plot dendrogram 
+#plot(clust)
+
+# Cut dendrogram into optimal number of clusters
+groups <- cutree(clust, k = 2) 
+
+groups
+```
+
+```{r add cluster to temporary phyloseq object}
+sample_data(ps_tmp)$Cluster <- factor(groups[sample_names(ps_tmp)])
+```
+
+```{r visualize taxa, warning=FALSE}
+ord <- ordinate(ps_tmp, method = "PCoA", distance = beta$rAitchison)
+
+p_clust_tax_plaque_week2 <- plot_ordination(ps_tmp, ord, color = "Cluster", shape = "Inflammation_response") +
+  geom_point(size = 3) +
+  scale_color_manual(values = cluster_colors) +
+  labs(shape = "Responder groups", color = "Microbiota cluster") +
+  theme_light() + theme_linedraw() +    
+  theme(legend.position = "none")
+
+p_clust_tax_plaque_week2
+```
+
+```{r}
+p_clust_tax_plaque_week2 <- p_clust_tax_plaque_week2 +  labs(title = "", 
+                                                                   x = "Axis 1 [57.5%]", y = "Axis 2 [32.6%]")
+
+p_clust_tax_plaque_week2
+```
+
+```{r bar plot}
+# Convert sample_data to a data frame
+metadata <- data.frame(sample_data(ps_tmp))
+
+# Make sure variables are factors
+metadata$Cluster <- factor(metadata$Cluster)
+metadata$Inflammation_response <- factor(metadata$Inflammation_response)
+
+# Summarise counts and proportions
+df_plot <- metadata %>%
+  group_by(Cluster, Inflammation_response) %>%
+  summarise(n = n(), .groups = "drop") %>%
+  group_by(Cluster) %>%
+  mutate(prop = n / sum(n))
+
+p_bar_tax_plaque_week2 <- ggplot(df_plot, aes(x = Cluster, y = prop, fill = Inflammation_response)) +
+  geom_bar(stat = "identity", position = "fill", color = "black", width = 0.7) +
+  geom_text(
+    aes(label = n),
+    position = position_fill(vjust = 0.5),
+    size = 4
+  ) +
+  scale_fill_manual(values = infl_pal) +
+  scale_y_continuous(labels = scales::percent_format()) +
+  labs(
+    title = "", 
+    x = "Microbiota cluster",
+    y = "Proportion of participants",
+    fill = "Responder group"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    panel.grid.major.x = element_blank(),
+    axis.text.x = element_text(face = "bold"),
+    legend.position = "none"
+  )
+
+p_bar_tax_plaque_week2
+```
+
+```{r statistic}
+# Create contingency table
+tab <- table(metadata$Cluster, metadata$Inflammation_response)
+
+# Pearson's Chi-square test
+fisher.test(tab)
+
+# Effect size (Cramér's V)
+library(rcompanion)
+cramerV(tab)
+```
+
+## MetaPhlAn, plaque, week 4
+```{r distances taxa PLAQUE WEEK 4, warning=FALSE}
+# Subset phyloseq object
+ps_tmp <- ps_up %>%
+        subset_samples(Sample == "Plaque" & Period == "Week 4") %>%
+        subset_taxa(Class != "UNCLASSIFIED") %>% 
+        transform_sample_counts(function(x) x/sum(x) * 1)
+
+# Extract OTU table
+otu_mat <- as(otu_table(ps_tmp), "matrix") %>% t()
+# Assign sample names explicitly
+rownames(otu_mat) <- sample_names(ps_tmp)
+
+# Robust CLR transformation
+clr_mat <- vegan::decostand(otu_mat, "rclr") 
+# Assign sample names explicitly
+rownames(clr_mat) <- sample_names(ps_tmp)
+
+# Assign Robust Aitchison distance to beta variable
+beta$rAitchison <- vegan::vegdist(clr_mat, method = "euclidean") %>% 
+  magrittr::divide_by(100)
+
+# Remove Bray-Curtis and Sørensen beta
+beta$bray <- NULL 
+beta$sorensen <- NULL 
+
+hopkins(clr_mat, n = nrow(clr_mat)-1)
+```
+
+## Optimal number of clusters
+```{r optimal clusters}
+# Elbow method on CLR data
+set.seed(123)
+
+wss <- numeric(10)
+
+for (k in 1:10) {
+  km <- kmeans(clr_mat, centers = k, nstart = 25)
+  wss[k] <- km$tot.withinss
+}
+
+plot(1:10, wss, type = "b", pch = 19,
+     xlab = "Number of clusters (k)",
+     ylab = "Total within-cluster sum of squares")
+
+# Silhouette method on Robust Aithison distances
+sil_width <- numeric(10)
+
+for (k in 2:10) {
+  groups <- cutree(hclust(beta$rAitchison, method = "average"), k = k)
+  sil <- silhouette(groups, beta$rAitchison)
+  sil_width[k] <- mean(sil[, 3])
+}
+
+plot(2:10, sil_width[2:10], type = "b", pch = 19,
+     xlab = "Number of clusters (k)",
+     ylab = "Average silhouette width")
+```
+For these samples, the optimal number of clusters is 3. 
+
+## Cut groups into optimal number of clusters
+```{r}
+# Perform hierarchical clustering 
+clust <- hclust(beta$rAitchison, method = "average") 
+
+# Plot dendrogram 
+#plot(clust)
+
+# Cut dendrogram into optimal number of clusters
+groups <- cutree(clust, k = 3) 
+
+groups
+```
+
+```{r add cluster to temporary phyloseq object}
+sample_data(ps_tmp)$Cluster <- factor(groups[sample_names(ps_tmp)])
+```
+
+```{r visualize taxa, warning=FALSE}
+ord <- ordinate(ps_tmp, method = "PCoA", distance = beta$rAitchison)
+
+p_clust_tax_plaque_week4 <- plot_ordination(ps_tmp, ord, color = "Cluster", shape = "Inflammation_response") +
+  geom_point(size = 3) +
+  scale_color_manual(values = cluster_colors) +
+  labs(shape = "Responder groups", color = "Microbiota cluster") +
+  theme_light() + theme_linedraw() +    
+  theme(legend.position = "none")
+
+p_clust_tax_plaque_week4
+```
+
+```{r}
+p_clust_tax_plaque_week4 <- p_clust_tax_plaque_week4 +  labs(title = "", 
+                                                                   x = "Axis 1 [47.4%]", y = "Axis 2 [44.4%]")
+
+p_clust_tax_plaque_week4
+```
+
+```{r bar plot}
+# Convert sample_data to a data frame
+metadata <- data.frame(sample_data(ps_tmp))
+
+# Make sure variables are factors
+metadata$Cluster <- factor(metadata$Cluster)
+metadata$Inflammation_response <- factor(metadata$Inflammation_response)
+
+# Summarise counts and proportions
+df_plot <- metadata %>%
+  group_by(Cluster, Inflammation_response) %>%
+  summarise(n = n(), .groups = "drop") %>%
+  group_by(Cluster) %>%
+  mutate(prop = n / sum(n))
+
+p_bar_tax_plaque_week4 <- ggplot(df_plot, aes(x = Cluster, y = prop, fill = Inflammation_response)) +
+  geom_bar(stat = "identity", position = "fill", color = "black", width = 0.7) +
+  geom_text(
+    aes(label = n),
+    position = position_fill(vjust = 0.5),
+    size = 4
+  ) +
+  scale_fill_manual(values = infl_pal) +
+  scale_y_continuous(labels = scales::percent_format()) +
+  labs(
+    title = "", 
+    x = "Microbiota cluster",
+    y = "Proportion of participants",
+    fill = "Responder group"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    panel.grid.major.x = element_blank(),
+    axis.text.x = element_text(face = "bold"),
+    legend.position = "none"
+  )
+
+p_bar_tax_plaque_week4
+```
+
+```{r statistic}
+# Create contingency table
+tab <- table(metadata$Cluster, metadata$Inflammation_response)
+
+# Pearson's Chi-square test
+fisher.test(tab)
+
+# Effect size (Cramér's V)
+cramerV(tab)
+```
+
+# Calculate HUMAnN beta diversity distances
+```{r HUMAnN data transformation}
+# HUMAnN data transformation for beta diversity analysis
+# Calculates bjaccard, wjaccard and rAitchison beta diversity measures
+beta_pway <- pw_mia %>%
+  transform_sample_counts(function(x) x/sum(x) * 100) %>%
+  phyloseq_compute_bdiv()
+```
+
+## HUMAnN, saliva, baseline
+```{r distances pway SALIVA BASELINE, warning=FALSE}
+# Subset phyloseq object
+ps_tmp <- pw_mia %>%
+          subset_samples(Sample == "Saliva" & Period == "Baseline") %>%
+          transform_sample_counts(function(x) x/sum(x) * 1) 
+
+# Extract OTU table
+otu_mat <- as(otu_table(ps_tmp), "matrix") %>% t()
+# Assign sample names explicitly
+rownames(otu_mat) <- sample_names(ps_tmp) 
+
+# Robust CLR transformation
+clr_mat <- vegan::decostand(otu_mat, "rclr") 
+# Assign sample names explicitly
+rownames(clr_mat) <- sample_names(ps_tmp)
+
+# Assign Robust Aitchison distance to beta variable
+beta_pway$rAitchison <- vegan::vegdist(clr_mat, method = "euclidean") %>% 
+  magrittr::divide_by(100)
+
+# Remove Bray-Curtis and Sørensen
+beta_pway$bray <- NULL
+beta_pway$sorensen <- NULL
+
+hopkins(clr_mat, n = nrow(clr_mat)-1)
+```
+
+## Optimal number of clusters
+```{r optimal clusters}
+# Elbow method on CLR data
+set.seed(123)
+
+wss <- numeric(10)
+
+for (k in 1:10) {
+  km <- kmeans(clr_mat, centers = k, nstart = 25)
+  wss[k] <- km$tot.withinss
+}
+
+plot(1:10, wss, type = "b", pch = 19,
+     xlab = "Number of clusters (k)",
+     ylab = "Total within-cluster sum of squares")
+
+# Silhouette method on Robust Aithison distances
+sil_width <- numeric(10)
+
+for (k in 2:10) {
+  groups <- cutree(hclust(beta_pway$rAitchison, method = "average"), k = k)
+  sil <- silhouette(groups, beta_pway$rAitchison)
+  sil_width[k] <- mean(sil[, 3])
+}
+
+plot(2:10, sil_width[2:10], type = "b", pch = 19,
+     xlab = "Number of clusters (k)",
+     ylab = "Average silhouette width")
+```
+For these samples, the optimal number of clusters is 2.  
+
+## Cut groups into optimal number of clusters
+```{r}
+# Perform hierarchical clustering 
+clust <- hclust(beta_pway$rAitchison, method = "average") 
+
+# Plot dendrogram 
+#plot(clust)
+
+# Cut dendrogram into optimal number of clusters
+groups <- cutree(clust, k = 2) 
+
+groups
+```
+
+```{r add cluster to temporary phyloseq object}
+sample_data(ps_tmp)$Cluster <- factor(groups[sample_names(ps_tmp)])
+```
+
+```{r visualize taxa, warning=FALSE}
+ord <- ordinate(ps_tmp, method = "PCoA", distance = beta_pway$rAitchison)
+
+p_clust_pway_saliva_baseline <- plot_ordination(ps_tmp, ord, color = "Cluster", shape = "Inflammation_response") +
+  geom_point(size = 3) +
+  scale_color_manual(values = cluster_colors) +
+  labs(shape = "Responder groups", color = "Microbiota cluster") +
+  theme_light() + theme_linedraw() +    
+  theme(legend.position = "none") 
+
+p_clust_pway_saliva_baseline
+```
+
+```{r}
+p_clust_pway_saliva_baseline <- p_clust_pway_saliva_baseline +  labs(title = "", 
+                                                                   x = "Axis 1 [56.6%]", y = "Axis 2 [34.8%]")
+
+p_clust_pway_saliva_baseline
+```
+
+```{r bar plot}
+# Convert sample_data to a data frame
+metadata <- data.frame(sample_data(ps_tmp))
+
+# Make sure variables are factors
+metadata$Cluster <- factor(metadata$Cluster)
+metadata$Inflammation_response <- factor(metadata$Inflammation_response)
+
+# Summarise counts and proportions
+df_plot <- metadata %>%
+  group_by(Cluster, Inflammation_response) %>%
+  summarise(n = n(), .groups = "drop") %>%
+  group_by(Cluster) %>%
+  mutate(prop = n / sum(n))
+
+p_bar_pway_saliva_baseline <- ggplot(df_plot, aes(x = Cluster, y = prop, fill = Inflammation_response)) +
+  geom_bar(stat = "identity", position = "fill", color = "black", width = 0.7) +
+  geom_text(
+    aes(label = n),
+    position = position_fill(vjust = 0.5),
+    size = 4
+  ) +
+  scale_fill_manual(values = infl_pal) +
+  scale_y_continuous(labels = scales::percent_format()) +
+  labs(
+    title = "", 
+    x = "Microbiota cluster",
+    y = "Proportion of participants",
+    fill = "Responder group"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    panel.grid.major.x = element_blank(),
+    axis.text.x = element_text(face = "bold"),
+    legend.position = "none"
+  )
+
+p_bar_pway_saliva_baseline
+```
+
+```{r statistic}
+# Create contingency table
+tab <- table(metadata$Cluster, metadata$Inflammation_response)
+
+# Pearson's Chi-square test
+fisher.test(tab)
+
+# Effect size (Cramér's V)
+cramerV(tab)
+```
+
+## HUMAnN, saliva, week 2
+```{r distances pway SALIVA WEEK 2, warning=FALSE}
+# Subset phyloseq object
+ps_tmp <- pw_mia %>%
+          subset_samples(Sample == "Saliva" & Period == "Week 2") %>%
+          transform_sample_counts(function(x) x/sum(x) * 1) 
+
+# Extract OTU table
+otu_mat <- as(otu_table(ps_tmp), "matrix") %>% t()
+# Assign sample names explicitly
+rownames(otu_mat) <- sample_names(ps_tmp) 
+
+# Robust CLR transformation
+clr_mat <- vegan::decostand(otu_mat, "rclr") 
+# Assign sample names explicitly
+rownames(clr_mat) <- sample_names(ps_tmp)
+
+# Assign Robust Aitchison distance to beta variable
+beta_pway$rAitchison <- vegan::vegdist(clr_mat, method = "euclidean") %>% 
+  magrittr::divide_by(100)
+
+# Remove Bray-Curtis and Sørensen
+beta_pway$bray <- NULL
+beta_pway$sorensen <- NULL
+
+hopkins(clr_mat, n = nrow(clr_mat)-1)
+```
+
+## Optimal number of clusters
+```{r optimal clusters}
+# Elbow method on CLR data
+set.seed(123)
+
+wss <- numeric(10)
+
+for (k in 1:10) {
+  km <- kmeans(clr_mat, centers = k, nstart = 25)
+  wss[k] <- km$tot.withinss
+}
+
+plot(1:10, wss, type = "b", pch = 19,
+     xlab = "Number of clusters (k)",
+     ylab = "Total within-cluster sum of squares")
+
+# Silhouette method on Robust Aithison distances
+sil_width <- numeric(10)
+
+for (k in 2:10) {
+  groups <- cutree(hclust(beta_pway$rAitchison, method = "average"), k = k)
+  sil <- silhouette(groups, beta_pway$rAitchison)
+  sil_width[k] <- mean(sil[, 3])
+}
+
+plot(2:10, sil_width[2:10], type = "b", pch = 19,
+     xlab = "Number of clusters (k)",
+     ylab = "Average silhouette width")
+```
+For these samples, the optimal number of clusters is 3. 
+
+## Cut groups into optimal number of clusters
+```{r}
+# Perform hierarchical clustering 
+clust <- hclust(beta_pway$rAitchison, method = "average") 
+
+# Plot dendrogram 
+#plot(clust)
+
+# Cut dendrogram into optimal number of clusters
+groups <- cutree(clust, k = 3) 
+
+groups
+```
+
+```{r add cluster to temporary phyloseq object}
+sample_data(ps_tmp)$Cluster <- factor(groups[sample_names(ps_tmp)])
+```
+
+```{r visualize taxa, warning=FALSE}
+ord <- ordinate(ps_tmp, method = "PCoA", distance = beta_pway$rAitchison)
+
+p_clust_pway_saliva_week2 <- plot_ordination(ps_tmp, ord, color = "Cluster", shape = "Inflammation_response") +
+  geom_point(size = 3) +
+  scale_color_manual(values = cluster_colors) +
+  labs(shape = "Responder groups", color = "Microbiota cluster") +
+  theme_light() + theme_linedraw() +    
+  theme(legend.position = "none")
+
+p_clust_pway_saliva_week2
+```
+
+```{r}
+p_clust_pway_saliva_week2 <- p_clust_pway_saliva_week2 +  labs(title = "", 
+                                                                   x = "Axis 1 [53%]", y = "Axis 2 [38.2%]")
+
+p_clust_pway_saliva_week2
+```
+
+```{r bar plot}
+# Convert sample_data to a data frame
+metadata <- data.frame(sample_data(ps_tmp))
+
+# Make sure variables are factors
+metadata$Cluster <- factor(metadata$Cluster)
+metadata$Inflammation_response <- factor(metadata$Inflammation_response)
+
+# Summarise counts and proportions
+df_plot <- metadata %>%
+  group_by(Cluster, Inflammation_response) %>%
+  summarise(n = n(), .groups = "drop") %>%
+  group_by(Cluster) %>%
+  mutate(prop = n / sum(n))
+
+p_bar_pway_saliva_week2 <- ggplot(df_plot, aes(x = Cluster, y = prop, fill = Inflammation_response)) +
+  geom_bar(stat = "identity", position = "fill", color = "black", width = 0.7) +
+  geom_text(
+    aes(label = n),
+    position = position_fill(vjust = 0.5),
+    size = 4
+  ) +
+  scale_fill_manual(values = infl_pal) +
+  scale_y_continuous(labels = scales::percent_format()) +
+  labs(
+    title = "", 
+    x = "Microbiota cluster",
+    y = "Proportion of participants",
+    fill = "Responder group"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    panel.grid.major.x = element_blank(),
+    axis.text.x = element_text(face = "bold"),
+    legend.position = "none"
+  )
+
+p_bar_pway_saliva_week2
+```
+```{r statistic}
+# Create contingency table
+tab <- table(metadata$Cluster, metadata$Inflammation_response)
+
+# Pearson's Chi-square test
+fisher.test(tab)
+
+# Effect size (Cramér's V)
+cramerV(tab)
+```
+
+## HUMAnN, saliva, week 4
+```{r distances pway SALIVA WEEK 4, warning=FALSE}
+# Subset phyloseq object
+ps_tmp <- pw_mia %>%
+          subset_samples(Sample == "Saliva" & Period == "Week 4") %>%
+          transform_sample_counts(function(x) x/sum(x) * 1) 
+
+# Extract OTU table
+otu_mat <- as(otu_table(ps_tmp), "matrix") %>% t()
+# Assign sample names explicitly
+rownames(otu_mat) <- sample_names(ps_tmp) 
+
+# Robust CLR transformation
+clr_mat <- vegan::decostand(otu_mat, "rclr") 
+# Assign sample names explicitly
+rownames(clr_mat) <- sample_names(ps_tmp)
+
+# Assign Robust Aitchison distance to beta variable
+beta_pway$rAitchison <- vegan::vegdist(clr_mat, method = "euclidean") %>% 
+  magrittr::divide_by(100)
+
+# Remove Bray-Curtis and Sørensen
+beta_pway$bray <- NULL
+beta_pway$sorensen <- NULL
+
+hopkins(clr_mat, n = nrow(clr_mat)-1)
+```
+
+## Optimal number of clusters
+```{r optimal clusters}
+# Elbow method on CLR data
+set.seed(123)
+
+wss <- numeric(10)
+
+for (k in 1:10) {
+  km <- kmeans(clr_mat, centers = k, nstart = 25)
+  wss[k] <- km$tot.withinss
+}
+
+plot(1:10, wss, type = "b", pch = 19,
+     xlab = "Number of clusters (k)",
+     ylab = "Total within-cluster sum of squares")
+
+# Silhouette method on Robust Aithison distances
+sil_width <- numeric(10)
+
+for (k in 2:10) {
+  groups <- cutree(hclust(beta_pway$rAitchison, method = "average"), k = k)
+  sil <- silhouette(groups, beta_pway$rAitchison)
+  sil_width[k] <- mean(sil[, 3])
+}
+
+plot(2:10, sil_width[2:10], type = "b", pch = 19,
+     xlab = "Number of clusters (k)",
+     ylab = "Average silhouette width")
+```
+For these samples, the optimal number of clusters is 2. 
+
+## Cut groups into optimal number of clusters
+```{r}
+# Perform hierarchical clustering 
+clust <- hclust(beta_pway$rAitchison, method = "average") 
+
+# Plot dendrogram 
+#plot(clust)
+
+# Cut dendrogram into optimal number of clusters
+groups <- cutree(clust, k = 2) 
+
+groups
+```
+
+```{r add cluster to temporary phyloseq object}
+sample_data(ps_tmp)$Cluster <- factor(groups[sample_names(ps_tmp)])
+```
+
+```{r visualize taxa, warning=FALSE}
+ord <- ordinate(ps_tmp, method = "PCoA", distance = beta_pway$rAitchison)
+
+p_clust_pway_saliva_week4 <- plot_ordination(ps_tmp, ord, color = "Cluster", shape = "Inflammation_response") +
+  geom_point(size = 3) +
+  scale_color_manual(values = cluster_colors) +
+  labs(shape = "Responder groups", color = "Microbiota cluster") +
+  theme_light() + theme_linedraw() +    
+  theme(legend.position = "none") 
+
+p_clust_pway_saliva_week4
+```
+
+```{r}
+p_clust_pway_saliva_week4 <- p_clust_pway_saliva_week4 +  labs(title = "", 
+                                                                   x = "Axis 1 [71.2%]", y = "Axis 2 [16.9%]")
+
+p_clust_pway_saliva_week4
+```
+
+```{r bar plot}
+# Convert sample_data to a data frame
+metadata <- data.frame(sample_data(ps_tmp))
+
+# Make sure variables are factors
+metadata$Cluster <- factor(metadata$Cluster)
+metadata$Inflammation_response <- factor(metadata$Inflammation_response)
+
+# Summarise counts and proportions
+df_plot <- metadata %>%
+  group_by(Cluster, Inflammation_response) %>%
+  summarise(n = n(), .groups = "drop") %>%
+  group_by(Cluster) %>%
+  mutate(prop = n / sum(n))
+
+p_bar_pway_saliva_week4 <- ggplot(df_plot, aes(x = Cluster, y = prop, fill = Inflammation_response)) +
+  geom_bar(stat = "identity", position = "fill", color = "black", width = 0.7) +
+  geom_text(
+    aes(label = n),
+    position = position_fill(vjust = 0.5),
+    size = 4
+  ) +
+  scale_fill_manual(values = infl_pal) +
+  scale_y_continuous(labels = scales::percent_format()) +
+  labs(
+    title = "", 
+    x = "Microbiota cluster",
+    y = "Proportion of participants",
+    fill = "Responder group"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    panel.grid.major.x = element_blank(),
+    axis.text.x = element_text(face = "bold"),
+    legend.position = "none"
+  )
+
+p_bar_pway_saliva_week4
+```
+
+```{r statistic}
+# Create contingency table
+tab <- table(metadata$Cluster, metadata$Inflammation_response)
+
+# Pearson's Chi-square test
+fisher.test(tab)
+
+# Effect size (Cramér's V)
+cramerV(tab)
+```
+
+## HUMAnN, plaque, baseline
+```{r distances pway PLAQUE BASELINE, warning=FALSE}
+# Subset phyloseq object
+ps_tmp <- pw_mia %>%
+          subset_samples(Sample == "Plaque" & Period == "Baseline") %>%
+          transform_sample_counts(function(x) x/sum(x) * 1) 
+
+# Extract OTU table
+otu_mat <- as(otu_table(ps_tmp), "matrix") %>% t()
+# Assign sample names explicitly
+rownames(otu_mat) <- sample_names(ps_tmp) 
+
+# Robust CLR transformation
+clr_mat <- vegan::decostand(otu_mat, "rclr") 
+# Assign sample names explicitly
+rownames(clr_mat) <- sample_names(ps_tmp)
+
+# Assign Robust Aitchison distance to beta variable
+beta_pway$rAitchison <- vegan::vegdist(clr_mat, method = "euclidean") %>% 
+  magrittr::divide_by(100)
+
+# Remove Bray-Curtis and Sørensen
+beta_pway$bray <- NULL
+beta_pway$sorensen <- NULL
+
+hopkins(clr_mat, n = nrow(clr_mat)-1)
+```
+
+## Optimal number of clusters
+```{r optimal clusters}
+# Elbow method on CLR data
+set.seed(123)
+
+wss <- numeric(10)
+
+for (k in 1:10) {
+  km <- kmeans(clr_mat, centers = k, nstart = 25)
+  wss[k] <- km$tot.withinss
+}
+
+plot(1:10, wss, type = "b", pch = 19,
+     xlab = "Number of clusters (k)",
+     ylab = "Total within-cluster sum of squares")
+
+# Silhouette method on Robust Aithison distances
+sil_width <- numeric(10)
+
+for (k in 2:10) {
+  groups <- cutree(hclust(beta_pway$rAitchison, method = "average"), k = k)
+  sil <- silhouette(groups, beta_pway$rAitchison)
+  sil_width[k] <- mean(sil[, 3])
+}
+
+plot(2:10, sil_width[2:10], type = "b", pch = 19,
+     xlab = "Number of clusters (k)",
+     ylab = "Average silhouette width")
+```
+For these samples, the optimal number of clusters is 3. 
+
+## Cut groups into optimal number of clusters
+```{r}
+# Perform hierarchical clustering 
+clust <- hclust(beta_pway$rAitchison, method = "average") 
+
+# Plot dendrogram 
+#plot(clust)
+
+# Cut dendrogram into optimal number of clusters
+groups <- cutree(clust, k = 3) 
+
+groups
+```
+
+```{r add cluster to temporary phyloseq object}
+sample_data(ps_tmp)$Cluster <- factor(groups[sample_names(ps_tmp)])
+```
+
+```{r visualize taxa, warning=FALSE}
+ord <- ordinate(ps_tmp, method = "PCoA", distance = beta_pway$rAitchison)
+
+p_clust_pway_plaque_baseline <- plot_ordination(ps_tmp, ord, color = "Cluster", shape = "Inflammation_response") +
+  geom_point(size = 3) +
+  scale_color_manual(values = cluster_colors) +
+  labs(shape = "Responder groups", color = "Microbiota cluster") +
+  theme_light() + theme_linedraw() +    
+  theme(legend.position = "none") 
+
+p_clust_pway_plaque_baseline
+```
+
+```{r}
+p_clust_pway_plaque_baseline <- p_clust_pway_plaque_baseline +  labs(title = "", 
+                                                                   x = "Axis 1 [52.9%]", y = "Axis 2 [42.2%]")
+
+p_clust_pway_plaque_baseline
+```
+
+```{r bar plot}
+# Convert sample_data to a data frame
+metadata <- data.frame(sample_data(ps_tmp))
+
+# Make sure variables are factors
+metadata$Cluster <- factor(metadata$Cluster)
+metadata$Inflammation_response <- factor(metadata$Inflammation_response)
+
+# Summarise counts and proportions
+df_plot <- metadata %>%
+  group_by(Cluster, Inflammation_response) %>%
+  summarise(n = n(), .groups = "drop") %>%
+  group_by(Cluster) %>%
+  mutate(prop = n / sum(n))
+
+p_bar_pway_plaque_baseline <- ggplot(df_plot, aes(x = Cluster, y = prop, fill = Inflammation_response)) +
+  geom_bar(stat = "identity", position = "fill", color = "black", width = 0.7) +
+  geom_text(
+    aes(label = n),
+    position = position_fill(vjust = 0.5),
+    size = 4
+  ) +
+  scale_fill_manual(values = infl_pal) +
+  scale_y_continuous(labels = scales::percent_format()) +
+  labs(
+    title = "", 
+    x = "Microbiota cluster",
+    y = "Proportion of participants",
+    fill = "Responder group"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    panel.grid.major.x = element_blank(),
+    axis.text.x = element_text(face = "bold"),
+    legend.position = "none"
+  )
+
+p_bar_pway_plaque_baseline
+```
+
+```{r statistic}
+# Create contingency table
+tab <- table(metadata$Cluster, metadata$Inflammation_response)
+
+# Pearson's Chi-square test
+fisher.test(tab)
+
+# Effect size (Cramér's V)
+cramerV(tab)
+```
+
+## HUMAnN, plaque, week 2
+```{r distances pway PLAQUE Week 2, warning=FALSE}
+# Subset phyloseq object
+ps_tmp <- pw_mia %>%
+          subset_samples(Sample == "Plaque" & Period == "Week 2") %>%
+          transform_sample_counts(function(x) x/sum(x) * 1) 
+
+# Extract OTU table
+otu_mat <- as(otu_table(ps_tmp), "matrix") %>% t()
+# Assign sample names explicitly
+rownames(otu_mat) <- sample_names(ps_tmp) 
+
+# Robust CLR transformation
+clr_mat <- vegan::decostand(otu_mat, "rclr") 
+# Assign sample names explicitly
+rownames(clr_mat) <- sample_names(ps_tmp)
+
+# Assign Robust Aitchison distance to beta variable
+beta_pway$rAitchison <- vegan::vegdist(clr_mat, method = "euclidean") %>% 
+  magrittr::divide_by(100)
+
+# Remove Bray-Curtis and Sørensen
+beta_pway$bray <- NULL
+beta_pway$sorensen <- NULL
+
+hopkins(clr_mat, n = nrow(clr_mat)-1)
+```
+
+## Optimal number of clusters
+```{r optimal clusters}
+# Elbow method on CLR data
+set.seed(123)
+
+wss <- numeric(10)
+
+for (k in 1:10) {
+  km <- kmeans(clr_mat, centers = k, nstart = 25)
+  wss[k] <- km$tot.withinss
+}
+
+plot(1:10, wss, type = "b", pch = 19,
+     xlab = "Number of clusters (k)",
+     ylab = "Total within-cluster sum of squares")
+
+# Silhouette method on Robust Aithison distances
+sil_width <- numeric(10)
+
+for (k in 2:10) {
+  groups <- cutree(hclust(beta_pway$rAitchison, method = "average"), k = k)
+  sil <- silhouette(groups, beta_pway$rAitchison)
+  sil_width[k] <- mean(sil[, 3])
+}
+
+plot(2:10, sil_width[2:10], type = "b", pch = 19,
+     xlab = "Number of clusters (k)",
+     ylab = "Average silhouette width")
+```
+For these samples, the optimal number of clusters is 2. 
+
+## Cut groups into optimal number of clusters
+```{r}
+# Perform hierarchical clustering 
+clust <- hclust(beta_pway$rAitchison, method = "average") 
+
+# Plot dendrogram 
+#plot(clust)
+
+# Cut dendrogram into optimal number of clusters
+groups <- cutree(clust, k = 2) 
+
+groups
+```
+
+```{r add cluster to temporary phyloseq object}
+sample_data(ps_tmp)$Cluster <- factor(groups[sample_names(ps_tmp)])
+```
+
+```{r visualize taxa, warning=FALSE}
+ord <- ordinate(ps_tmp, method = "PCoA", distance = beta_pway$rAitchison)
+
+p_clust_pway_plaque_week2 <- plot_ordination(ps_tmp, ord, color = "Cluster", shape = "Inflammation_response") +
+  geom_point(size = 3) +
+  scale_color_manual(values = cluster_colors) +
+  labs(shape = "Responder groups", color = "Microbiota cluster") +
+  theme_light() + theme_linedraw() +    
+  theme(legend.position = "none") 
+
+p_clust_pway_plaque_week2
+```
+
+```{r}
+p_clust_pway_plaque_week2 <- p_clust_pway_plaque_week2 +  labs(title = "", 
+                                                                   x = "Axis 1 [71.5%]", y = "Axis 2 [25%]")
+
+p_clust_pway_plaque_week2
+```
+
+```{r bar plot}
+# Convert sample_data to a data frame
+metadata <- data.frame(sample_data(ps_tmp))
+
+# Make sure variables are factors
+metadata$Cluster <- factor(metadata$Cluster)
+metadata$Inflammation_response <- factor(metadata$Inflammation_response)
+
+# Summarise counts and proportions
+df_plot <- metadata %>%
+  group_by(Cluster, Inflammation_response) %>%
+  summarise(n = n(), .groups = "drop") %>%
+  group_by(Cluster) %>%
+  mutate(prop = n / sum(n))
+
+p_bar_pway_plaque_week2 <- ggplot(df_plot, aes(x = Cluster, y = prop, fill = Inflammation_response)) +
+  geom_bar(stat = "identity", position = "fill", color = "black", width = 0.7) +
+  geom_text(
+    aes(label = n),
+    position = position_fill(vjust = 0.5),
+    size = 4
+  ) +
+  scale_fill_manual(values = infl_pal) +
+  scale_y_continuous(labels = scales::percent_format()) +
+  labs(
+    title = "", 
+    x = "Microbiota cluster",
+    y = "Proportion of participants",
+    fill = "Responder group"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    panel.grid.major.x = element_blank(),
+    axis.text.x = element_text(face = "bold"),
+    legend.position = "none"
+  )
+
+p_bar_pway_plaque_week2
+```
+```{r statistic}
+# Create contingency table
+tab <- table(metadata$Cluster, metadata$Inflammation_response)
+
+# Pearson's Chi-square test
+fisher.test(tab)
+
+# Effect size (Cramér's V)
+cramerV(tab)
+```
+
+## HUMAnN, plaque, week 4
+```{r distances pway PLAQUE Week 4, warning=FALSE}
+# Subset phyloseq object
+ps_tmp <- pw_mia %>%
+          subset_samples(Sample == "Plaque" & Period == "Week 4") %>%
+          transform_sample_counts(function(x) x/sum(x) * 1) 
+
+# Extract OTU table
+otu_mat <- as(otu_table(ps_tmp), "matrix") %>% t()
+# Assign sample names explicitly
+rownames(otu_mat) <- sample_names(ps_tmp) 
+
+# Robust CLR transformation
+clr_mat <- vegan::decostand(otu_mat, "rclr") 
+# Assign sample names explicitly
+rownames(clr_mat) <- sample_names(ps_tmp)
+
+# Assign Robust Aitchison distance to beta variable
+beta_pway$rAitchison <- vegan::vegdist(clr_mat, method = "euclidean") %>% 
+  magrittr::divide_by(100)
+
+# Remove Bray-Curtis and Sørensen
+beta_pway$bray <- NULL
+beta_pway$sorensen <- NULL
+
+hopkins(clr_mat, n = nrow(clr_mat)-1)
+```
+
+## Optimal number of clusters
+```{r optimal clusters}
+# Elbow method on CLR data
+set.seed(123)
+
+wss <- numeric(10)
+
+for (k in 1:10) {
+  km <- kmeans(clr_mat, centers = k, nstart = 25)
+  wss[k] <- km$tot.withinss
+}
+
+plot(1:10, wss, type = "b", pch = 19,
+     xlab = "Number of clusters (k)",
+     ylab = "Total within-cluster sum of squares")
+
+# Silhouette method on Robust Aithison distances
+sil_width <- numeric(10)
+
+for (k in 2:10) {
+  groups <- cutree(hclust(beta_pway$rAitchison, method = "average"), k = k)
+  sil <- silhouette(groups, beta_pway$rAitchison)
+  sil_width[k] <- mean(sil[, 3])
+}
+
+plot(2:10, sil_width[2:10], type = "b", pch = 19,
+     xlab = "Number of clusters (k)",
+     ylab = "Average silhouette width")
+```
+For these samples, the optimal number of clusters is 3. 
+
+## Cut groups into optimal number of clusters
+```{r}
+# Perform hierarchical clustering 
+clust <- hclust(beta_pway$rAitchison, method = "average") 
+
+# Plot dendrogram 
+#plot(clust)
+
+# Cut dendrogram into optimal number of clusters
+groups <- cutree(clust, k = 3) 
+
+groups
+```
+
+```{r add cluster to temporary phyloseq object}
+sample_data(ps_tmp)$Cluster <- factor(groups[sample_names(ps_tmp)])
+```
+
+```{r visualize taxa, warning=FALSE}
+ord <- ordinate(ps_tmp, method = "PCoA", distance = beta_pway$rAitchison)
+
+p_clust_pway_plaque_week4 <- plot_ordination(ps_tmp, ord, color = "Cluster", shape = "Inflammation_response") +
+  geom_point(size = 3) +
+  scale_color_manual(values = cluster_colors) +
+  labs(shape = "Responder groups", color = "Microbiota cluster") +
+  theme_light() + theme_linedraw() +
+  theme(legend.position = "none")
+
+p_clust_pway_plaque_week4
+```
+
+```{r}
+p_clust_pway_plaque_week4 <- p_clust_pway_plaque_week4 +  labs(title = "",
+                                                                   x = "Axis 1 [56.6%]", y = "Axis 2 [34.9%]")
+
+p_clust_pway_plaque_week4
+```
+```{r extract plot and legend}
+# p_clust_pway_plaque_week4 %>% 
+#         get_plotandlegend() -> p_clust_pway_plaque_week4
+# 
+# p_clust_pway_plaque_week4$p
+# 
+# p_clust_pway_plaque_week4$p_leg
+```
+
+
+
+```{r bar plot}
+# Convert sample_data to a data frame
+metadata <- data.frame(sample_data(ps_tmp))
+
+# Make sure variables are factors
+metadata$Cluster <- factor(metadata$Cluster)
+metadata$Inflammation_response <- factor(metadata$Inflammation_response)
+
+# Summarise counts and proportions
+df_plot <- metadata %>%
+  group_by(Cluster, Inflammation_response) %>%
+  summarise(n = n(), .groups = "drop") %>%
+  group_by(Cluster) %>%
+  mutate(prop = n / sum(n))
+
+p_bar_pway_plaque_week4 <- ggplot(df_plot, aes(x = Cluster, y = prop, fill = Inflammation_response)) +
+  geom_bar(stat = "identity", position = "fill", color = "black", width = 0.7) +
+  geom_text(
+    aes(label = n),
+    position = position_fill(vjust = 0.5),
+    size = 4
+  ) +
+  scale_fill_manual(values = infl_pal) +
+  scale_y_continuous(labels = scales::percent_format()) +
+  labs(
+    title = "", 
+    x = "Microbiota cluster",
+    y = "Proportion of participants",
+    fill = "Responder group"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    panel.grid.major.x = element_blank(),
+    axis.text.x = element_text(face = "bold"),
+    legend.position = "none"
+  )
+
+p_bar_pway_plaque_week4
+```
+
+```{r statistic}
+# Create contingency table
+tab <- table(metadata$Cluster, metadata$Inflammation_response)
+
+# Pearson's Chi-square test
+fisher.test(tab)
+
+# Effect size (Cramér's V)
+cramerV(tab)
+```
+## Tax, saliva, cluster
+```{r}
+ggarrange(p_clust_tax_saliva_baseline, p_clust_tax_saliva_week2, p_clust_tax_saliva_week4, 
+          ncol = 3, nrow = 1, common.legend = TRUE, legend = "right", align = "hv")
+
+ggsave(filename = "/Volumes/lnp524/PhD/Puplications/Inflammation_trajectories/03_beta_diversity/beta_group/tax_saliva_cluster.png", width = 30, height = 10, units = "cm", dpi = 300)
+```
+
+## Tax, saliva, bar
+```{r}
+ggarrange(p_bar_tax_saliva_baseline, p_bar_tax_saliva_week2, p_bar_tax_saliva_week4, 
+          ncol = 3, nrow = 1, common.legend = TRUE, legend = "right", align = "hv")
+
+ggsave(filename = "/Volumes/lnp524/PhD/Puplications/Inflammation_trajectories/03_beta_diversity/beta_group/tax_saliva_bar.png", width = 30, height = 10, units = "cm", dpi = 300)
+```
+
+## Tax, plaque, cluster
+```{r}
+ggarrange(p_clust_tax_plaque_baseline, p_clust_tax_plaque_week2, p_clust_tax_plaque_week4, 
+          ncol = 3, nrow = 1, common.legend = TRUE, legend = "right", align = "hv")
+
+ggsave(filename = "/Volumes/lnp524/PhD/Puplications/Inflammation_trajectories/03_beta_diversity/beta_group/tax_plaque_cluster.png", width = 30, height = 10, units = "cm", dpi = 300)
+```
+
+## Tax, plaque, bar
+```{r}
+ggarrange(p_bar_tax_plaque_baseline, p_bar_tax_plaque_week2, p_bar_tax_plaque_week4, 
+          ncol = 3, nrow = 1, common.legend = TRUE, legend = "right", align = "hv")
+
+ggsave(filename = "/Volumes/lnp524/PhD/Puplications/Inflammation_trajectories/03_beta_diversity/beta_group/tax_plaque_bar.png", width = 30, height = 10, units = "cm", dpi = 300)
+```
+
+## Pway, saliva, cluster
+```{r}
+ggarrange(p_clust_pway_saliva_baseline, p_clust_pway_saliva_week2, p_clust_pway_saliva_week4, 
+          ncol = 3, nrow = 1, common.legend = TRUE, legend = "right", align = "hv")
+
+ggsave(filename = "/Volumes/lnp524/PhD/Puplications/Inflammation_trajectories/03_beta_diversity/beta_group/pway_saliva_cluster.png", width = 30, height = 10, units = "cm", dpi = 300)
+```
+
+## Pway, saliva, bar
+```{r}
+ggarrange(p_bar_pway_saliva_baseline, p_bar_pway_saliva_week2, p_bar_pway_saliva_week4, 
+          ncol = 3, nrow = 1, common.legend = TRUE, legend = "right", align = "hv")
+
+ggsave(filename = "/Volumes/lnp524/PhD/Puplications/Inflammation_trajectories/03_beta_diversity/beta_group/pway_saliva_bar.png", width = 30, height = 10, units = "cm", dpi = 300)
+```
+
+## Pway, plaque, cluster
+```{r}
+ggarrange(p_clust_pway_plaque_baseline, p_clust_pway_plaque_week2, p_clust_pway_plaque_week4, 
+          ncol = 3, nrow = 1, common.legend = TRUE, legend = "right", align = "hv")
+
+ggsave(filename = "/Volumes/lnp524/PhD/Puplications/Inflammation_trajectories/03_beta_diversity/beta_group/pway_plaque_cluster.png", width = 30, height = 10, units = "cm", dpi = 300)
+```
+
+## Pway, plaque, bar
+```{r}
+ggarrange(p_bar_pway_plaque_baseline, p_bar_pway_plaque_week2, p_bar_pway_plaque_week4, 
+          ncol = 3, nrow = 1, common.legend = TRUE, legend = "right", align = "hv")
+
+ggsave(filename = "/Volumes/lnp524/PhD/Puplications/Inflammation_trajectories/03_beta_diversity/beta_group/pway_plaque_bar.png", width = 30, height = 10, units = "cm", dpi = 300)
+```
+
+```{r session info}
+sessionInfo()
+```
